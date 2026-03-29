@@ -1,0 +1,3 @@
+#include "resource.h"
+
+IDI_NOCTIS_VIEWER_ICON ICON "assets\\noctis_viewer.ico"
