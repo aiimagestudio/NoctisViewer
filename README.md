@@ -1,4 +1,4 @@
-# Noctis Viewer
+# Noctis Viewer v1.1.0
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -19,9 +19,11 @@ Noctis Viewer is built to solve two common pain points:
 - Lightweight and fast startup
 - Browse PNG, JPG, JPEG, BMP, GIF, TIF, and TIFF files
 - Arrow keys for previous / next image
-- `Page Up` / `Page Down` for zoom in / zoom out
+- `Page Up` / `Page Down` for zoom in / out
+- `Ctrl+O` to open file dialog
 - Double-click the empty area to open an image
 - Auto-fit to window on load and resize
+- Real-time zoom level display in status bar
 - Dark UI optimized for quick viewing
 - Metadata side panel with:
   - 2-column table layout
@@ -29,7 +31,18 @@ Noctis Viewer is built to solve two common pain points:
   - collapsible header
   - click-to-copy value cells
 - `Delete` key support with confirmation dialog
+- File association support (add to "Open with" menu)
+- Menu bar with File, Tools, and Help options
 - Custom application icon included
+
+## New in v1.1.0
+
+- Added menu bar (File, Tools, Help)
+- Added zoom level display in status bar
+- Added file association feature (Tools → Set as Default Image Viewer)
+- Added "Visit GitHub" menu item
+- Added "About" dialog with version info
+- Fixed various UI improvements
 
 ## Metadata Behavior
 
@@ -54,6 +67,7 @@ Images saved with its Prompt Saver Node are a great match for Noctis Viewer and 
 - `Right`, `Down`: next image
 - `Page Up`: zoom in
 - `Page Down`: zoom out
+- `Ctrl+O`: open file dialog
 - `Delete`: delete current image after confirmation
 - Mouse wheel: previous / next image
 - Double-click empty area: open image
@@ -100,6 +114,18 @@ bin\Release\Noctis_Viewer.exe
 ```powershell
 .\build_native.bat
 ```
+
+## Download
+
+Download the latest release:
+
+- `Noctis_Viewer-v1.1.0-x64.zip`
+
+Extract and run `Noctis_Viewer.exe`. No installation required.
+
+## GitHub
+
+https://github.com/aiimagestudio/NoctisViewer
 
 ## Roadmap Ideas
 

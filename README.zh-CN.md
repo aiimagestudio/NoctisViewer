@@ -1,4 +1,4 @@
-# Noctis Viewer
+# Noctis Viewer v1.1.0
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -20,8 +20,10 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 支持 PNG、JPG、JPEG、BMP、GIF、TIF、TIFF
 - 方向键切换上一张 / 下一张
 - `Page Up` / `Page Down` 放大 / 缩小
+- `Ctrl+O` 打开文件对话框
 - 双击空白区打开图片
 - 加载时自动适应窗口，调整窗口大小时自动重新适应
+- 状态栏实时显示缩放比例
 - 深色界面
 - 右侧元数据面板支持：
   - 两列表格显示
@@ -29,7 +31,18 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
   - 点击表头折叠 / 展开
   - 点击值单元格复制内容
 - 支持 `Delete` 键删除当前图片，并带确认弹窗
+- 支持文件关联（添加到"打开方式"菜单）
+- 菜单栏支持（文件、工具、帮助）
 - 自带应用图标
+
+## v1.1.0 更新内容
+
+- 新增菜单栏（文件、工具、帮助）
+- 状态栏显示当前缩放比例
+- 新增文件关联功能（工具 → 设为默认图片查看器）
+- 新增"访问 GitHub"菜单项
+- 新增"关于"对话框显示版本信息
+- 修复多项 UI 问题
 
 ## 元数据显示规则
 
@@ -54,6 +67,7 @@ https://github.com/receyuki/comfyui-prompt-reader-node
 - `Right`、`Down`：下一张
 - `Page Up`：放大
 - `Page Down`：缩小
+- `Ctrl+O`：打开文件对话框
 - `Delete`：删除当前图片（需确认）
 - 鼠标滚轮：上一张 / 下一张
 - 双击空白区：打开图片
@@ -100,6 +114,18 @@ bin\Release\Noctis_Viewer.exe
 ```powershell
 .\build_native.bat
 ```
+
+## 下载
+
+下载最新版本：
+
+- `Noctis_Viewer-v1.1.0-x64.zip`
+
+解压后直接运行 `Noctis_Viewer.exe`，无需安装。
+
+## GitHub
+
+https://github.com/aiimagestudio/NoctisViewer
 
 ## 未来可扩展方向
 

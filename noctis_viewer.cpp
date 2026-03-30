@@ -5,6 +5,7 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <windowsx.h>
+#include <shlobj.h>
 #include <stdint.h>
 
 #include <algorithm>
@@ -28,6 +29,15 @@ const wchar_t* kWindowTitle = L"Noctis Viewer";
 constexpr int kMargin = 12;
 constexpr int kStatusHeightFallback = 24;
 constexpr int kPanelWidth = 420;
+
+// Menu IDs
+constexpr UINT kMenuIdFileOpen = 2001;
+constexpr UINT kMenuIdToolsAssociate = 2101;
+constexpr UINT kMenuIdHelpVisitGitHub = 2201;
+constexpr UINT kMenuIdHelpAbout = 2202;
+
+// Version
+constexpr wchar_t kAppVersion[] = L"1.1.0";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -89,6 +99,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void ClearViewerState();
 bool DeleteCurrentImage();
+void CreateMainMenu(HWND hwnd);
+bool RegisterFileAssociation(const wchar_t* ext, bool setAsDefault);
+void ShowAssociationDialog(HWND hwnd);
 
 std::wstring ToLower(const std::wstring& input) {
     std::wstring result = input;
@@ -151,6 +164,141 @@ void CopyTextToClipboard(const std::wstring& text) {
         }
     }
     CloseClipboard();
+}
+
+// Get the full path of the executable
+std::wstring GetExecutablePath() {
+    wchar_t path[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH)) {
+        return std::wstring(path);
+    }
+    return L"";
+}
+
+// Register file association for current user (no admin required)
+bool RegisterFileAssociationForUser(const wchar_t* ext, const wchar_t* progId, bool setAsDefault) {
+    std::wstring exePath = GetExecutablePath();
+    if (exePath.empty()) {
+        return false;
+    }
+
+    // Build command line: "path" "%1"
+    std::wstring commandLine = L"\"" + exePath + L"\" \"%1\"";
+    
+    HKEY hKey;
+    LONG result;
+
+    // 1. Register under Software\Classes\Applications\Noctis_Viewer.exe
+    std::wstring appKey = L"Software\\Classes\\Applications\\Noctis_Viewer.exe\\shell\\open\\command";
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, appKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result == ERROR_SUCCESS) {
+        RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)commandLine.c_str(), static_cast<DWORD>((commandLine.length() + 1) * sizeof(wchar_t)));
+        RegCloseKey(hKey);
+    }
+
+    // 2. Add to OpenWithList for this extension
+    std::wstring openWithKey = std::wstring(L"Software\\Classes\\") + ext + L"\\OpenWithList\\Noctis_Viewer.exe";
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, openWithKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+    }
+
+    // 3. Create ProgID for this extension (optional, for friendly name and icon)
+    std::wstring progIdKey = std::wstring(L"Software\\Classes\\") + progId;
+    result = RegCreateKeyExW(HKEY_CURRENT_USER, progIdKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (result == ERROR_SUCCESS) {
+        std::wstring friendlyName = L"Image File (Noctis Viewer)";
+        RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)friendlyName.c_str(), static_cast<DWORD>((friendlyName.length() + 1) * sizeof(wchar_t)));
+        RegCloseKey(hKey);
+
+        // Set command
+        std::wstring progIdCmdKey = progIdKey + L"\\shell\\open\\command";
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, progIdCmdKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+        if (result == ERROR_SUCCESS) {
+            RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)commandLine.c_str(), static_cast<DWORD>((commandLine.length() + 1) * sizeof(wchar_t)));
+            RegCloseKey(hKey);
+        }
+
+        // Set default icon
+        std::wstring progIdIconKey = progIdKey + L"\\DefaultIcon";
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, progIdIconKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+        if (result == ERROR_SUCCESS) {
+            std::wstring iconPath = exePath + L",0";
+            RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)iconPath.c_str(), static_cast<DWORD>((iconPath.length() + 1) * sizeof(wchar_t)));
+            RegCloseKey(hKey);
+        }
+    }
+
+    // 4. Set as default if requested
+    if (setAsDefault) {
+        std::wstring extKey = std::wstring(L"Software\\Classes\\") + ext;
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, extKey.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr);
+        if (result == ERROR_SUCCESS) {
+            RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)progId, static_cast<DWORD>((wcslen(progId) + 1) * sizeof(wchar_t)));
+            RegCloseKey(hKey);
+        }
+    }
+
+    // Notify Windows of the change
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    return true;
+}
+
+// Register file association (public function)
+bool RegisterFileAssociation(const wchar_t* ext, bool setAsDefault) {
+    std::wstring progId = std::wstring(L"NoctisViewer.") + ext;
+    return RegisterFileAssociationForUser(ext, progId.c_str(), setAsDefault);
+}
+
+// Show association dialog
+void ShowAssociationDialog(HWND hwnd) {
+    // First, register to OpenWithList
+    (void)RegisterFileAssociation(L".png", false);
+    (void)RegisterFileAssociation(L".jpg", false);
+    (void)RegisterFileAssociation(L".jpeg", false);
+    (void)RegisterFileAssociation(L".bmp", false);
+    (void)RegisterFileAssociation(L".gif", false);
+    (void)RegisterFileAssociation(L".tiff", false);
+    
+    const wchar_t* message = L"Noctis Viewer has been added to the 'Open with' menu.\n\n"
+                             L"To set it as the default program for image files, "
+                             L"Windows will open the Default Apps settings.\n\n"
+                             L"Click OK to open settings (you'll need to manually select Noctis Viewer), "
+                             L"or Cancel to skip.";
+    
+    int result = MessageBoxW(hwnd, message, L"File Association", MB_OKCANCEL | MB_ICONINFORMATION);
+    
+    if (result == IDOK) {
+        // Open Windows Settings -> Default Apps
+        ShellExecuteW(hwnd, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL);
+    }
+}
+
+// Create main menu
+void CreateMainMenu(HWND hwnd) {
+    HMENU hMenu = CreateMenu();
+    
+    // File menu
+    HMENU hFileMenu = CreatePopupMenu();
+    AppendMenuW(hFileMenu, MF_STRING, kMenuIdFileOpen, L"&Open...\tCtrl+O");
+    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hFileMenu, MF_STRING, SC_CLOSE, L"E&xit\tAlt+F4");
+    AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hFileMenu), L"&File");
+    
+    // Tools menu
+    HMENU hToolsMenu = CreatePopupMenu();
+    AppendMenuW(hToolsMenu, MF_STRING, kMenuIdToolsAssociate, L"&Set as Default Image Viewer...");
+    AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hToolsMenu), L"&Tools");
+    
+    // Help menu
+    HMENU hHelpMenu = CreatePopupMenu();
+    AppendMenuW(hHelpMenu, MF_STRING, kMenuIdHelpVisitGitHub, L"&Visit GitHub");
+    AppendMenuW(hHelpMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hHelpMenu, MF_STRING, kMenuIdHelpAbout, L"&About Noctis Viewer");
+    AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hHelpMenu), L"&Help");
+    
+    SetMenu(hwnd, hMenu);
+    DrawMenuBar(hwnd);
 }
 
 std::wstring DecodeUtf8OrAnsi(const std::vector<uint8_t>& bytes) {
@@ -484,6 +632,7 @@ void UpdateStatusBar() {
     if (!g_currentFilePath.empty() && g_currentIndex >= 0 && !g_imageFiles.empty()) {
         text = GetFileNameOnly(g_currentFilePath) + L" | " + GetDirectoryName(g_currentFilePath) + L" (" +
                std::to_wstring(g_currentIndex + 1) + L"/" + std::to_wstring(g_imageFiles.size()) + L")";
+        text += L" | " + std::to_wstring(static_cast<int>(g_zoomLevel * 100)) + L"%";
     } else {
         text = L"Double-click the empty area to open an image | Arrow keys navigate | Page Up/Page Down zoom";
     }
@@ -616,6 +765,7 @@ void FitToWindow() {
     const float scaleX = static_cast<float>(viewWidth) / static_cast<float>(imageWidth);
     const float scaleY = static_cast<float>(viewHeight) / static_cast<float>(imageHeight);
     g_zoomLevel = std::clamp(std::min(scaleX, scaleY), kMinZoom, 1.0f);
+    UpdateStatusBar();
 }
 
 void LoadFolderImages(const std::wstring& folderPath) {
@@ -779,6 +929,7 @@ void ZoomIn() {
         return;
     }
     g_zoomLevel = std::min(g_zoomLevel * kZoomStep, kMaxZoom);
+    UpdateStatusBar();
     InvalidateRect(g_mainWindow, nullptr, FALSE);
 }
 
@@ -787,6 +938,7 @@ void ZoomOut() {
         return;
     }
     g_zoomLevel = std::max(g_zoomLevel / kZoomStep, kMinZoom);
+    UpdateStatusBar();
     InvalidateRect(g_mainWindow, nullptr, FALSE);
 }
 
@@ -996,6 +1148,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         g_brushHeaderHover = CreateSolidBrush(kColorPanelHeaderHover);
         g_brushStatus = CreateSolidBrush(kColorPanelBg);
 
+        CreateMainMenu(hwnd);
+
         g_metadataHeader = CreateWindowW(
             L"BUTTON", L"Generation Info <<",
             WS_CHILD | BS_OWNERDRAW | WS_TABSTOP,
@@ -1029,6 +1183,32 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
+        }
+        
+        // Menu commands
+        switch (LOWORD(wParam)) {
+        case kMenuIdFileOpen:
+            OpenImageDialog(hwnd);
+            return 0;
+        case kMenuIdToolsAssociate:
+            ShowAssociationDialog(hwnd);
+            return 0;
+        case kMenuIdHelpVisitGitHub:
+            ShellExecuteW(hwnd, L"open", L"https://github.com/aiimagestudio/NoctisViewer", nullptr, nullptr, SW_SHOWNORMAL);
+            return 0;
+        case kMenuIdHelpAbout: {
+            std::wstring aboutText = std::wstring(L"Noctis Viewer\n\nVersion ") + kAppVersion +
+                L"\n\nA fast, minimal native image viewer for Windows.\n"
+                L"Supports PNG, JPG, BMP, GIF, and TIFF formats.\n\n"
+                L"Keyboard shortcuts:\n"
+                L"• Arrow keys / Mouse wheel - Navigate images\n"
+                L"• Page Up / Page Down - Zoom in / out\n"
+                L"• Delete - Delete current image\n"
+                L"• Double-click - Open file dialog\n\n"
+                L"Visit GitHub: https://github.com/aiimagestudio/NoctisViewer";
+            MessageBoxW(hwnd, aboutText.c_str(), L"About Noctis Viewer", MB_OK | MB_ICONINFORMATION);
+            return 0;
+        }
         }
         break;
 
@@ -1138,6 +1318,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_KEYDOWN:
+        // Check for Ctrl+O (Open)
+        if ((GetKeyState(VK_CONTROL) & 0x8000) && (wParam == 'O' || wParam == 'o')) {
+            OpenImageDialog(hwnd);
+            return 0;
+        }
         switch (wParam) {
         case VK_LEFT:
         case VK_UP:
