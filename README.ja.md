@@ -49,6 +49,14 @@ Noctis Viewer は WebUI 互換の情報のみを表示します。
 - 表示対象: `parameters`、プレーンテキストの prompt
 - 表示しない: ComfyUI の `prompt` / `workflow` JSON
 
+## HaldCLUT クレジット
+
+開発およびテストで使用した HaldCLUT コレクションは、次のプロジェクトから取得しました。
+
+https://github.com/cedeber/hald-clut
+
+すばらしい LUT コレクションを公開・保守している `hald-clut` プロジェクトと貢献者の皆さまに感謝します。
+
 ## 操作方法
 
 - `Left`、`Up`: 前の画像

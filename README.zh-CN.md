@@ -49,6 +49,14 @@ Noctis Viewer 只显示 WebUI 兼容信息。
 - 支持：`parameters`、纯文本 prompt
 - 忽略：ComfyUI 的 `prompt` / `workflow` JSON
 
+## HaldCLUT 致谢
+
+开发和测试过程中使用的 HaldCLUT 资源来自：
+
+https://github.com/cedeber/hald-clut
+
+感谢 `hald-clut` 项目及其贡献者提供并维护这套非常优秀的 LUT 资源。
+
 ## 快捷键
 
 - `Left`、`Up`：上一张

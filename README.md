@@ -49,6 +49,14 @@ Noctis Viewer only shows WebUI-compatible metadata fields.
 - Supported: `parameters`, plain prompt text
 - Ignored on purpose: ComfyUI `prompt` / `workflow` JSON graphs
 
+## HaldCLUT Credits
+
+The HaldCLUT collection used during development and testing was sourced from:
+
+https://github.com/cedeber/hald-clut
+
+Many thanks to the `hald-clut` project and its contributors for providing and maintaining this excellent LUT collection.
+
 ## Controls
 
 - `Left`, `Up`: previous image
