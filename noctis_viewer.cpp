@@ -12,6 +12,13 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <map>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <fstream>
+#include <sstream>
 
 using namespace Gdiplus;
 
@@ -24,20 +31,32 @@ namespace {
 
 const wchar_t* kMainClassName = L"ComfyUIImageViewerNative";
 const wchar_t* kMetadataViewClassName = L"ComfyUIMetadataView";
+const wchar_t* kHaldCLUTViewClassName = L"NoctisHaldCLUTView";
+const wchar_t* kProgressDialogClassName = L"NoctisProgressDialog";
 const wchar_t* kWindowTitle = L"Noctis Viewer";
+const wchar_t* kConfigFileName = L"config.ini";
 
 constexpr int kMargin = 12;
 constexpr int kStatusHeightFallback = 24;
 constexpr int kPanelWidth = 420;
+constexpr int kHaldCLUTPanelWidth = 280;
 
 // Menu IDs
 constexpr UINT kMenuIdFileOpen = 2001;
+constexpr UINT kMenuIdFileSavePreviewAs = 2002;
 constexpr UINT kMenuIdToolsAssociate = 2101;
+constexpr UINT kMenuIdViewHaldCLUT = 2150;
+constexpr UINT kMenuIdViewHaldCLUTModeMx = 2151;
+constexpr UINT kMenuIdViewHaldCLUTModeSmooth = 2152;
 constexpr UINT kMenuIdHelpVisitGitHub = 2201;
 constexpr UINT kMenuIdHelpAbout = 2202;
 
+// Progress dialog IDs
+constexpr UINT kProgressTimerId = 3001;
+constexpr UINT kProgressUpdateMsg = WM_USER + 100;
+
 // Version
-constexpr wchar_t kAppVersion[] = L"1.1.0";
+constexpr wchar_t kAppVersion[] = L"1.3.0";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -60,6 +79,7 @@ constexpr COLORREF kColorBorder = RGB(74, 78, 92);
 constexpr COLORREF kColorTextPrimary = RGB(230, 232, 236);
 constexpr COLORREF kColorTextSecondary = RGB(170, 174, 182);
 constexpr COLORREF kColorAccent = RGB(110, 168, 255);
+constexpr COLORREF kColorProgressBar = RGB(70, 130, 220);
 
 struct MetadataEntry {
     std::wstring key;
@@ -67,10 +87,57 @@ struct MetadataEntry {
     int height = 0;
 };
 
+// HaldCLUT structures
+struct HaldCLUTEntry {
+    std::wstring name;
+    std::wstring path;
+    int level = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct HaldCLUTCategory {
+    std::wstring name;
+    std::vector<HaldCLUTEntry> entries;
+    bool expanded = true;
+};
+
+// HaldCLUT selection using indices instead of pointer
+struct HaldCLUTSelection {
+    int categoryIndex = -1;
+    int entryIndex = -1;
+    
+    bool IsValid() const {
+        return categoryIndex >= 0 && entryIndex >= 0;
+    }
+    
+    void Reset() {
+        categoryIndex = -1;
+        entryIndex = -1;
+    }
+};
+
+enum class HaldCLUTApplyMode {
+    MxCompatible,
+    SmoothInterpolated,
+};
+
+// Progress dialog data
+struct LoadingProgress {
+    std::atomic<int> current{0};
+    std::atomic<int> total{0};
+    std::atomic<bool> cancelled{false};
+    std::atomic<bool> completed{false};
+    std::wstring currentFile;
+    std::mutex mutex;
+};
+
 HWND g_mainWindow = nullptr;
 HWND g_statusBar = nullptr;
 HWND g_metadataHeader = nullptr;
 HWND g_metadataView = nullptr;
+HWND g_haldCLUTPanel = nullptr;
+HWND g_progressDialog = nullptr;
 
 ULONG_PTR g_gdiplusToken = 0;
 Image* g_currentImage = nullptr;
@@ -95,13 +162,58 @@ bool g_panelVisible = false;
 bool g_panelCollapsed = false;
 bool g_headerHot = false;
 
+// HaldCLUT globals
+bool g_haldCLUTPanelVisible = false;
+bool g_haldCLUTHot = false;
+int g_haldCLUTScrollPos = 0;
+int g_haldCLUTTotalHeight = 0;
+int g_haldCLUTHoverIndex = -1;
+bool g_haldCLUTHoverOriginal = false;
+std::vector<HaldCLUTCategory> g_haldCLUTCategories;
+HaldCLUTSelection g_selectedHaldCLUT;
+Image* g_haldCLUTImage = nullptr;
+Bitmap* g_haldCLUTBitmap = nullptr;  // Cached as Bitmap for faster access
+bool g_showingOriginal = false;
+std::wstring g_haldCLUTBasePath;
+HaldCLUTApplyMode g_haldCLUTApplyMode = HaldCLUTApplyMode::MxCompatible;
+
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK ProgressDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void ClearViewerState();
 bool DeleteCurrentImage();
 void CreateMainMenu(HWND hwnd);
 bool RegisterFileAssociation(const wchar_t* ext, bool setAsDefault);
 void ShowAssociationDialog(HWND hwnd);
+
+// HaldCLUT functions
+int CalculateHaldLevel(int width, int height);
+bool ValidateHaldCLUT(const std::wstring& path, int& outLevel, int& outWidth, int& outHeight);
+void LoadHaldCLUTDirectoryRecursive(const std::wstring& path, const std::wstring& categoryName, 
+                                     LoadingProgress* progress = nullptr);
+void LoadHaldCLUTDatabaseAsync();
+void ToggleHaldCLUTPanel();
+void ApplyHaldCLUTToBitmap(Bitmap* source, Bitmap* clut, int level);
+void ApplyHaldCLUTToBitmapMx(Bitmap* source, Bitmap* clut);
+void ApplyHaldCLUTToBitmapSmooth(Bitmap* source, Bitmap* clut, int level);
+void UpdateHaldCLUTLayout();
+void LoadSelectedHaldCLUT();
+void ClearLoadedHaldCLUT();
+void UpdateMenuState();
+bool BuildPreviewBitmap(Bitmap& outBitmap);
+bool SaveCurrentPreviewAs(HWND hwnd);
+bool GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid);
+
+// Config functions
+std::wstring GetConfigPath();
+void LoadConfig();
+void SaveConfig();
+void ShowConfigDialog(HWND hwnd);
+
+// Progress dialog
+void ShowLoadingProgressDialog(LoadingProgress* progress);
+void CloseLoadingProgressDialog();
 
 std::wstring ToLower(const std::wstring& input) {
     std::wstring result = input;
@@ -173,6 +285,68 @@ std::wstring GetExecutablePath() {
         return std::wstring(path);
     }
     return L"";
+}
+
+// Get the directory of the executable
+std::wstring GetExecutableDirectory() {
+    std::wstring exePath = GetExecutablePath();
+    size_t pos = exePath.find_last_of(L"\\/");
+    return pos == std::wstring::npos ? L"" : exePath.substr(0, pos);
+}
+
+// Config file path
+std::wstring GetConfigPath() {
+    return GetExecutableDirectory() + L"\\" + kConfigFileName;
+}
+
+// Load configuration from INI file
+void LoadConfig() {
+    std::wstring configPath = GetConfigPath();
+    wchar_t pathBuffer[MAX_PATH] = {0};
+    
+    GetPrivateProfileStringW(L"HaldCLUT", L"Path", L"", pathBuffer, MAX_PATH, configPath.c_str());
+    
+    if (wcslen(pathBuffer) > 0) {
+        g_haldCLUTBasePath = pathBuffer;
+    } else {
+        // Default empty - user must configure
+        g_haldCLUTBasePath = L"";
+    }
+}
+
+// Save configuration to INI file
+void SaveConfig() {
+    std::wstring configPath = GetConfigPath();
+    WritePrivateProfileStringW(L"HaldCLUT", L"Path", g_haldCLUTBasePath.c_str(), configPath.c_str());
+}
+
+// Show configuration dialog
+void ShowConfigDialog(HWND hwnd) {
+    // Create a simple input dialog
+    wchar_t pathBuffer[MAX_PATH] = {0};
+    wcsncpy_s(pathBuffer, g_haldCLUTBasePath.c_str(), MAX_PATH - 1);
+    
+    // Simple dialog using Windows API
+    // For simplicity, use SHBrowseForFolder or a simple input box
+    BROWSEINFOW bi = {};
+    bi.hwndOwner = hwnd;
+    bi.lpszTitle = L"Select HaldCLUT Directory:";
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    
+    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+    if (pidl) {
+        wchar_t selectedPath[MAX_PATH];
+        if (SHGetPathFromIDListW(pidl, selectedPath)) {
+            g_haldCLUTBasePath = selectedPath;
+            SaveConfig();
+            
+            // Reload if panel is visible
+            if (g_haldCLUTPanelVisible) {
+                LoadHaldCLUTDatabaseAsync();
+            }
+        }
+        CoTaskMemFree(pidl);
+    }
 }
 
 // Register file association for current user (no admin required)
@@ -277,27 +451,38 @@ void ShowAssociationDialog(HWND hwnd) {
 // Create main menu
 void CreateMainMenu(HWND hwnd) {
     HMENU hMenu = CreateMenu();
-    
+
     // File menu
     HMENU hFileMenu = CreatePopupMenu();
     AppendMenuW(hFileMenu, MF_STRING, kMenuIdFileOpen, L"&Open...\tCtrl+O");
+    AppendMenuW(hFileMenu, MF_STRING, kMenuIdFileSavePreviewAs, L"&Save Current Preview As...");
     AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hFileMenu, MF_STRING, SC_CLOSE, L"E&xit\tAlt+F4");
     AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hFileMenu), L"&File");
-    
+
+    // View menu
+    HMENU hViewMenu = CreatePopupMenu();
+    AppendMenuW(hViewMenu, MF_STRING, kMenuIdViewHaldCLUT, L"&HaldCLUT Panel\tH");
+    HMENU hHaldModeMenu = CreatePopupMenu();
+    AppendMenuW(hHaldModeMenu, MF_STRING, kMenuIdViewHaldCLUTModeMx, L"&MX_LUT Compatible");
+    AppendMenuW(hHaldModeMenu, MF_STRING, kMenuIdViewHaldCLUTModeSmooth, L"&Smooth Interpolation");
+    AppendMenuW(hViewMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hHaldModeMenu), L"HaldCLUT &Mode");
+    AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hViewMenu), L"&View");
+
     // Tools menu
     HMENU hToolsMenu = CreatePopupMenu();
     AppendMenuW(hToolsMenu, MF_STRING, kMenuIdToolsAssociate, L"&Set as Default Image Viewer...");
     AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hToolsMenu), L"&Tools");
-    
+
     // Help menu
     HMENU hHelpMenu = CreatePopupMenu();
     AppendMenuW(hHelpMenu, MF_STRING, kMenuIdHelpVisitGitHub, L"&Visit GitHub");
     AppendMenuW(hHelpMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hHelpMenu, MF_STRING, kMenuIdHelpAbout, L"&About Noctis Viewer");
     AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hHelpMenu), L"&Help");
-    
+
     SetMenu(hwnd, hMenu);
+    UpdateMenuState();
     DrawMenuBar(hwnd);
 }
 
@@ -506,6 +691,11 @@ bool ReadPngTextChunk(FILE* file, std::wstring& parameters, std::wstring& plainP
         }
 
         const uint32_t chunkLength = ReadBigEndian32(lengthBytes);
+        // Sanity check: PNG chunks shouldn't be larger than 10MB
+        if (chunkLength > 10 * 1024 * 1024) {
+            break;
+        }
+        
         char chunkType[5] = {};
         if (fread(chunkType, 1, 4, file) != 4) {
             break;
@@ -557,8 +747,9 @@ bool ReadPngTextChunk(FILE* file, std::wstring& parameters, std::wstring& plainP
             if (pos < chunkData.size()) {
                 ++pos;
             }
+            // Fix: Add boundary check before accessing chunkData
             if (compressionFlag == 0 && pos <= chunkData.size()) {
-                textBytes.assign(chunkData.begin() + static_cast<long long>(pos), chunkData.end());
+                textBytes.assign(chunkData.begin() + static_cast<std::ptrdiff_t>(pos), chunkData.end());
             }
         }
 
@@ -606,17 +797,25 @@ std::vector<MetadataEntry> ExtractMetadataEntries(const std::wstring& filePath) 
 }
 
 int GetStatusBarHeight() {
-    if (!g_statusBar) {
-        return kStatusHeightFallback;
+    if (g_statusBar) {
+        RECT rc;
+        if (GetClientRect(g_statusBar, &rc)) {
+            int h = rc.bottom - rc.top;
+            if (h > 0) return h;
+        }
     }
     return kStatusHeightFallback;
 }
 
 int GetCurrentPanelWidth() {
-    if (!g_panelVisible) {
-        return 0;
+    int width = 0;
+    if (g_panelVisible) {
+        width += g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
     }
-    return g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
+    if (g_haldCLUTPanelVisible) {
+        width += kHaldCLUTPanelWidth;
+    }
+    return width;
 }
 
 RECT GetImageViewportRect() {
@@ -633,10 +832,31 @@ void UpdateStatusBar() {
         text = GetFileNameOnly(g_currentFilePath) + L" | " + GetDirectoryName(g_currentFilePath) + L" (" +
                std::to_wstring(g_currentIndex + 1) + L"/" + std::to_wstring(g_imageFiles.size()) + L")";
         text += L" | " + std::to_wstring(static_cast<int>(g_zoomLevel * 100)) + L"%";
+        if (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal) {
+            text += (g_haldCLUTApplyMode == HaldCLUTApplyMode::MxCompatible)
+                ? L" | LUT: MX"
+                : L" | LUT: Smooth";
+        }
     } else {
         text = L"Double-click the empty area to open an image | Arrow keys navigate | Page Up/Page Down zoom";
     }
     SetWindowTextW(g_statusBar, text.c_str());
+}
+
+void UpdateMenuState() {
+    if (!g_mainWindow) return;
+    HMENU menu = GetMenu(g_mainWindow);
+    if (!menu) return;
+
+    CheckMenuRadioItem(menu, kMenuIdViewHaldCLUTModeMx, kMenuIdViewHaldCLUTModeSmooth,
+                       g_haldCLUTApplyMode == HaldCLUTApplyMode::MxCompatible
+                           ? kMenuIdViewHaldCLUTModeMx
+                           : kMenuIdViewHaldCLUTModeSmooth,
+                       MF_BYCOMMAND);
+
+    const UINT saveFlags = (g_currentImage != nullptr) ? MF_BYCOMMAND | MF_ENABLED : MF_BYCOMMAND | MF_GRAYED;
+    EnableMenuItem(menu, kMenuIdFileSavePreviewAs, saveFlags);
+    DrawMenuBar(g_mainWindow);
 }
 
 void RecalculateMetadataLayout() {
@@ -715,31 +935,50 @@ void LayoutChildren(bool invalidateMainWindow = true) {
     GetClientRect(g_mainWindow, &client);
 
     const int statusHeight = GetStatusBarHeight();
-    const int panelWidth = GetCurrentPanelWidth();
     const int contentHeight = std::max<int>(0, client.bottom - statusHeight);
-    const int panelLeft = client.right - panelWidth;
+
+    // Calculate positions from right to left
+    int rightEdge = client.right;
+
+    // HaldCLUT panel is rightmost
+    if (g_haldCLUTPanelVisible && g_haldCLUTPanel) {
+        MoveWindow(g_haldCLUTPanel, rightEdge - kHaldCLUTPanelWidth, 0, kHaldCLUTPanelWidth, contentHeight, TRUE);
+        ShowWindow(g_haldCLUTPanel, SW_SHOW);
+        rightEdge -= kHaldCLUTPanelWidth;
+    } else if (g_haldCLUTPanel) {
+        ShowWindow(g_haldCLUTPanel, SW_HIDE);
+    }
+
+    // Metadata panel is to the left of HaldCLUT
+    if (g_panelVisible) {
+        int metaWidth = g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
+        if (g_metadataHeader) {
+            MoveWindow(g_metadataHeader, rightEdge - metaWidth, 0, metaWidth, kHeaderHeight, TRUE);
+            ShowWindow(g_metadataHeader, SW_SHOW);
+        }
+        if (g_metadataView) {
+            if (!g_panelCollapsed) {
+                MoveWindow(g_metadataView, rightEdge - metaWidth, kHeaderHeight, metaWidth,
+                           std::max(0, contentHeight - kHeaderHeight), TRUE);
+            }
+            ShowWindow(g_metadataView, !g_panelCollapsed ? SW_SHOW : SW_HIDE);
+        }
+        rightEdge -= metaWidth;
+    } else {
+        if (g_metadataHeader) ShowWindow(g_metadataHeader, SW_HIDE);
+        if (g_metadataView) ShowWindow(g_metadataView, SW_HIDE);
+    }
 
     if (g_statusBar) {
         MoveWindow(g_statusBar, 0, client.bottom - statusHeight, client.right, statusHeight, TRUE);
     }
 
-    if (g_metadataHeader) {
-        if (g_panelVisible) {
-            MoveWindow(g_metadataHeader, panelLeft, 0, panelWidth, kHeaderHeight, TRUE);
-        }
-        ShowWindow(g_metadataHeader, g_panelVisible ? SW_SHOW : SW_HIDE);
-    }
-
-    if (g_metadataView) {
-        if (g_panelVisible && !g_panelCollapsed) {
-            MoveWindow(g_metadataView, panelLeft, kHeaderHeight, panelWidth,
-                       std::max(0, contentHeight - kHeaderHeight), TRUE);
-        }
-        ShowWindow(g_metadataView, (g_panelVisible && !g_panelCollapsed) ? SW_SHOW : SW_HIDE);
-    }
-
     if (g_panelVisible && !g_panelCollapsed) {
         RecalculateMetadataLayout();
+    }
+
+    if (g_haldCLUTPanelVisible) {
+        UpdateHaldCLUTLayout();
     }
 
     if (invalidateMainWindow) {
@@ -768,10 +1007,23 @@ void FitToWindow() {
     UpdateStatusBar();
 }
 
+std::wstring NormalizePathSeparator(const std::wstring& path) {
+    if (path.empty()) return path;
+    std::wstring result = path;
+    while (!result.empty() && (result.back() == L'\\' || result.back() == L'/')) {
+        result.pop_back();
+    }
+    return result;
+}
+
 void LoadFolderImages(const std::wstring& folderPath) {
     g_imageFiles.clear();
     WIN32_FIND_DATAW findData{};
-    HANDLE handle = FindFirstFileW((folderPath + L"\\*").c_str(), &findData);
+
+    std::wstring normalizedPath = NormalizePathSeparator(folderPath);
+    std::wstring searchPath = normalizedPath + L"\\*";
+
+    HANDLE handle = FindFirstFileW(searchPath.c_str(), &findData);
     if (handle == INVALID_HANDLE_VALUE) {
         return;
     }
@@ -786,7 +1038,7 @@ void LoadFolderImages(const std::wstring& folderPath) {
             continue;
         }
 
-        g_imageFiles.push_back(folderPath + L"\\" + name);
+        g_imageFiles.push_back(normalizedPath + L"\\" + name);
     } while (FindNextFileW(handle, &findData));
 
     FindClose(handle);
@@ -809,6 +1061,7 @@ void SetCurrentImage(Image* image) {
         g_currentImage = nullptr;
     }
     g_currentImage = image;
+    UpdateMenuState();
 }
 
 void ClearViewerState() {
@@ -819,6 +1072,9 @@ void ClearViewerState() {
     g_currentIndex = -1;
     g_metadataScrollPos = 0;
     g_zoomLevel = 1.0f;
+    g_showingOriginal = false;
+    g_selectedHaldCLUT.Reset();
+    ClearLoadedHaldCLUT();
     RefreshMetadataPanel();
     UpdateWindowTitle();
     UpdateStatusBar();
@@ -986,10 +1242,149 @@ void PaintImage(HDC dc) {
     const int x = viewport.left + std::max(0, (viewWidth - drawWidth) / 2);
     const int y = viewport.top + std::max(0, (viewHeight - drawHeight) / 2);
 
-    Graphics graphics(dc);
-    graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-    graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
-    graphics.DrawImage(g_currentImage, x, y, drawWidth, drawHeight);
+    // Check if we need to apply HaldCLUT
+    bool shouldApplyCLUT = (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal);
+
+    if (shouldApplyCLUT) {
+        Bitmap tempBitmap(imageWidth, imageHeight, PixelFormat32bppARGB);
+        if (tempBitmap.GetLastStatus() == Ok) {
+            Graphics tempGraphics(&tempBitmap);
+            tempGraphics.DrawImage(g_currentImage, 0, 0, imageWidth, imageHeight);
+
+            HaldCLUTCategory& cat = g_haldCLUTCategories[g_selectedHaldCLUT.categoryIndex];
+            HaldCLUTEntry& entry = cat.entries[g_selectedHaldCLUT.entryIndex];
+            ApplyHaldCLUTToBitmap(&tempBitmap, g_haldCLUTBitmap, entry.level);
+
+            // Draw the result
+            Graphics graphics(dc);
+            graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+            graphics.DrawImage(&tempBitmap, x, y, drawWidth, drawHeight);
+        } else {
+            // Fallback if temp bitmap creation fails
+            Graphics graphics(dc);
+            graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+            graphics.DrawImage(g_currentImage, x, y, drawWidth, drawHeight);
+        }
+    } else {
+        Graphics graphics(dc);
+        graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+        graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+        graphics.DrawImage(g_currentImage, x, y, drawWidth, drawHeight);
+    }
+}
+
+bool BuildPreviewBitmap(Bitmap& outBitmap) {
+    if (!g_currentImage) {
+        return false;
+    }
+
+    const int imageWidth = static_cast<int>(g_currentImage->GetWidth());
+    const int imageHeight = static_cast<int>(g_currentImage->GetHeight());
+    Graphics graphics(&outBitmap);
+    if (graphics.GetLastStatus() != Ok) {
+        return false;
+    }
+
+    graphics.DrawImage(g_currentImage, 0, 0, imageWidth, imageHeight);
+    if (graphics.GetLastStatus() != Ok) {
+        return false;
+    }
+
+    const bool shouldApplyCLUT = (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal);
+    if (!shouldApplyCLUT) {
+        return true;
+    }
+
+    HaldCLUTCategory& cat = g_haldCLUTCategories[g_selectedHaldCLUT.categoryIndex];
+    HaldCLUTEntry& entry = cat.entries[g_selectedHaldCLUT.entryIndex];
+    ApplyHaldCLUTToBitmap(&outBitmap, g_haldCLUTBitmap, entry.level);
+    return true;
+}
+
+bool GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
+    UINT num = 0;
+    UINT size = 0;
+    GetImageEncodersSize(&num, &size);
+    if (size == 0) {
+        return false;
+    }
+
+    std::vector<BYTE> buffer(size);
+    ImageCodecInfo* codecs = reinterpret_cast<ImageCodecInfo*>(buffer.data());
+    if (GetImageEncoders(num, size, codecs) != Ok) {
+        return false;
+    }
+
+    for (UINT i = 0; i < num; ++i) {
+        if (wcscmp(codecs[i].MimeType, mimeType) == 0) {
+            *pClsid = codecs[i].Clsid;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SaveCurrentPreviewAs(HWND hwnd) {
+    if (!g_currentImage) {
+        return false;
+    }
+
+    const std::wstring baseName = g_currentFilePath.empty()
+        ? L"preview"
+        : GetFileNameOnly(g_currentFilePath).substr(0, GetFileNameOnly(g_currentFilePath).find_last_of(L'.'));
+    const std::wstring suffix = (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal) ? L"_lut" : L"_preview";
+    std::wstring defaultName = baseName + suffix + L".png";
+
+    wchar_t fileName[MAX_PATH] = L"";
+    wcsncpy_s(fileName, defaultName.c_str(), _TRUNCATE);
+
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFilter = L"PNG Image (*.png)\0*.png\0JPEG Image (*.jpg)\0*.jpg\0BMP Image (*.bmp)\0*.bmp\0TIFF Image (*.tif)\0*.tif\0\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"png";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle = L"Save Current Preview As";
+
+    if (!GetSaveFileNameW(&ofn)) {
+        return false;
+    }
+
+    const int imageWidth = static_cast<int>(g_currentImage->GetWidth());
+    const int imageHeight = static_cast<int>(g_currentImage->GetHeight());
+    Bitmap previewBitmap(imageWidth, imageHeight, PixelFormat32bppARGB);
+    if (previewBitmap.GetLastStatus() != Ok || !BuildPreviewBitmap(previewBitmap)) {
+        ShowError(L"Failed to prepare the preview image for saving.");
+        return false;
+    }
+
+    std::wstring lowerPath = ToLower(fileName);
+    const wchar_t* mimeType = L"image/png";
+    if (EndsWith(lowerPath, L".jpg") || EndsWith(lowerPath, L".jpeg")) {
+        mimeType = L"image/jpeg";
+    } else if (EndsWith(lowerPath, L".bmp")) {
+        mimeType = L"image/bmp";
+    } else if (EndsWith(lowerPath, L".tif") || EndsWith(lowerPath, L".tiff")) {
+        mimeType = L"image/tiff";
+    }
+
+    CLSID encoderClsid{};
+    if (!GetEncoderClsid(mimeType, &encoderClsid)) {
+        ShowError(L"Failed to find a matching image encoder.");
+        return false;
+    }
+
+    if (previewBitmap.Save(fileName, &encoderClsid, nullptr) != Ok) {
+        ShowError(L"Failed to save the preview image.");
+        return false;
+    }
+
+    SetWindowTextW(g_statusBar, (std::wstring(L"Saved preview: ") + fileName).c_str());
+    return true;
 }
 
 LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1130,6 +1525,901 @@ LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// ==================== HaldCLUT Implementation ====================
+
+// HaldCLUT: image_size^2 = level^3
+// e.g., level=64 -> image=512x512 -> 512^2 = 262144 = 64^3
+// Fix: Add overflow protection
+int CalculateHaldLevel(int width, int height) {
+    if (width != height) return 0;
+    int size = width;
+    int level = 1;
+    // Maximum reasonable level (level^3 <= INT_MAX, so level <= 1625)
+    const int maxLevel = 1625;
+    while (level <= maxLevel && level * level * level < size * size) { 
+        ++level; 
+    }
+    if (level > maxLevel || level * level * level != size * size) return 0;
+    return level;
+}
+
+bool ValidateHaldCLUT(const std::wstring& path, int& outLevel, int& outWidth, int& outHeight) {
+    // Quick file size check first to avoid loading huge non-HaldCLUT files
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(path.c_str(), &findData);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    FindClose(hFind);
+    
+    // HaldCLUT files are typically PNGs of reasonable size (few MB)
+    // Skip files that are obviously not HaldCLUTs (too large)
+    if (findData.nFileSizeHigh > 0 || findData.nFileSizeLow > 50 * 1024 * 1024) {
+        return false;  // Skip files > 50MB
+    }
+    
+    Image* img = Image::FromFile(path.c_str(), FALSE);
+    if (!img || img->GetLastStatus() != Ok) {
+        if (img) delete img;
+        return false;
+    }
+    int w = static_cast<int>(img->GetWidth());
+    int h = static_cast<int>(img->GetHeight());
+    delete img;
+
+    int level = CalculateHaldLevel(w, h);
+    if (level <= 0) return false;
+
+    outLevel = level;
+    outWidth = w;
+    outHeight = h;
+    return true;
+}
+
+// Fix: Optimized recursive directory loading with progress tracking
+void LoadHaldCLUTDirectoryRecursive(const std::wstring& path, const std::wstring& categoryName,
+                                     LoadingProgress* progress) {
+    HaldCLUTCategory category;
+    category.name = categoryName;
+    category.expanded = true;
+
+    WIN32_FIND_DATAW findData{};
+    std::wstring normalizedPath = NormalizePathSeparator(path);
+    std::wstring searchPath = normalizedPath + L"\\*";
+
+    HANDLE hFind = FindFirstFileW(searchPath.c_str(), &findData);
+
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    std::vector<std::wstring> subdirs;
+    std::vector<std::wstring> files;
+
+    do {
+        if (progress && progress->cancelled.load()) {
+            FindClose(hFind);
+            return;
+        }
+
+        const std::wstring name = findData.cFileName;
+        if (name == L"." || name == L"..") continue;
+
+        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            subdirs.push_back(name);
+        } else if (EndsWith(ToLower(name), L".png")) {
+            files.push_back(name);
+        }
+    } while (FindNextFileW(hFind, &findData));
+
+    FindClose(hFind);
+
+    // Sort for consistent ordering
+    std::sort(files.begin(), files.end());
+    std::sort(subdirs.begin(), subdirs.end());
+
+    // Update total count for progress
+    if (progress) {
+        progress->total += static_cast<int>(files.size());
+    }
+
+    // Add PNG files to current category
+    for (const auto& file : files) {
+        if (progress && progress->cancelled.load()) {
+            return;
+        }
+
+        std::wstring fullPath = normalizedPath + L"\\" + file;
+
+        if (progress) {
+            std::lock_guard<std::mutex> lock(progress->mutex);
+            progress->currentFile = file;
+            progress->current++;
+        }
+
+        int level, width, height;
+        if (ValidateHaldCLUT(fullPath, level, width, height)) {
+            HaldCLUTEntry entry;
+            entry.name = file.substr(0, file.length() - 4);  // Remove .png
+            entry.path = fullPath;
+            entry.level = level;
+            entry.width = width;
+            entry.height = height;
+            category.entries.push_back(entry);
+        }
+    }
+
+    // Add category if it has entries
+    if (!category.entries.empty()) {
+        g_haldCLUTCategories.push_back(category);
+    }
+
+    // Recurse into subdirectories
+    for (const auto& subdir : subdirs) {
+        if (progress && progress->cancelled.load()) {
+            return;
+        }
+        std::wstring subPath = normalizedPath + L"\\" + subdir;
+        std::wstring subCategoryName = categoryName.empty() ? subdir : categoryName + L" / " + subdir;
+        LoadHaldCLUTDirectoryRecursive(subPath, subCategoryName, progress);
+    }
+}
+
+// Progress dialog procedure
+LRESULT CALLBACK ProgressDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static LoadingProgress* s_progress = nullptr;
+    
+    switch (msg) {
+    case WM_CREATE: {
+        CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
+        s_progress = reinterpret_cast<LoadingProgress*>(cs->lpCreateParams);
+        
+        // Create progress bar
+        HWND hProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
+            WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+            20, 60, 360, 20, hwnd, reinterpret_cast<HMENU>(1), nullptr, nullptr);
+        SendMessageW(hProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+        SendMessageW(hProgress, PBM_SETPOS, 0, 0);
+        
+        // Create cancel button
+        CreateWindowExW(0, L"BUTTON", L"Cancel",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            160, 100, 80, 25, hwnd, reinterpret_cast<HMENU>(2), nullptr, nullptr);
+        
+        // Create status text
+        CreateWindowExW(0, L"STATIC", L"Scanning HaldCLUT files...",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            20, 20, 360, 30, hwnd, reinterpret_cast<HMENU>(3), nullptr, nullptr);
+        
+        // Start timer for updates
+        SetTimer(hwnd, kProgressTimerId, 50, nullptr);
+        return 0;
+    }
+    
+    case WM_TIMER:
+        if (wParam == kProgressTimerId && s_progress) {
+            if (s_progress->completed.load() || s_progress->cancelled.load()) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            
+            HWND hProgress = GetDlgItem(hwnd, 1);
+            HWND hStatus = GetDlgItem(hwnd, 3);
+            
+            int total = s_progress->total.load();
+            int current = s_progress->current.load();
+            
+            if (total > 0) {
+                int percent = (current * 100) / total;
+                SendMessageW(hProgress, PBM_SETPOS, percent, 0);
+            }
+            
+            std::wstring status;
+            {
+                std::lock_guard<std::mutex> lock(s_progress->mutex);
+                status = L"Loading: " + s_progress->currentFile + L"\n(" + 
+                         std::to_wstring(current) + L"/" + std::to_wstring(total) + L")";
+            }
+            SetWindowTextW(hStatus, status.c_str());
+        }
+        return 0;
+    
+    case WM_COMMAND:
+        if (LOWORD(wParam) == 2 && s_progress) {  // Cancel button
+            s_progress->cancelled.store(true);
+            return 0;
+        }
+        break;
+        
+    case WM_CLOSE:
+        if (s_progress) {
+            s_progress->cancelled.store(true);
+        }
+        DestroyWindow(hwnd);
+        return 0;
+        
+    case WM_DESTROY:
+        KillTimer(hwnd, kProgressTimerId);
+        return 0;
+    }
+    
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void ShowLoadingProgressDialog(LoadingProgress* progress) {
+    if (!g_mainWindow) return;
+    
+    // Center on parent
+    RECT rcParent;
+    GetWindowRect(g_mainWindow, &rcParent);
+    int x = rcParent.left + (rcParent.right - rcParent.left - 400) / 2;
+    int y = rcParent.top + (rcParent.bottom - rcParent.top - 150) / 2;
+    
+    g_progressDialog = CreateWindowExW(
+        WS_DLGFRAME | WS_CAPTION, kProgressDialogClassName,
+        L"Loading HaldCLUT Database",
+        WS_VISIBLE | WS_POPUPWINDOW | WS_CAPTION,
+        x, y, 400, 150,
+        g_mainWindow, nullptr, 
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(g_mainWindow, GWLP_HINSTANCE)),
+        progress);
+    
+    // Disable main window
+    EnableWindow(g_mainWindow, FALSE);
+}
+
+void CloseLoadingProgressDialog() {
+    if (g_progressDialog) {
+        DestroyWindow(g_progressDialog);
+        g_progressDialog = nullptr;
+    }
+    EnableWindow(g_mainWindow, TRUE);
+    SetActiveWindow(g_mainWindow);
+}
+
+// Async loading with progress dialog
+void LoadHaldCLUTDatabaseAsync() {
+    if (g_haldCLUTBasePath.empty()) {
+        // No path configured, show dialog
+        int result = MessageBoxW(g_mainWindow, 
+            L"HaldCLUT directory not configured.\n\nWould you like to select a directory now?",
+            L"HaldCLUT Configuration", MB_YESNO | MB_ICONQUESTION);
+        if (result == IDYES) {
+            ShowConfigDialog(g_mainWindow);
+        }
+        if (g_haldCLUTBasePath.empty()) {
+            g_haldCLUTPanelVisible = false;
+            return;
+        }
+    }
+    
+    if (GetFileAttributesW(g_haldCLUTBasePath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        ShowError(L"HaldCLUT directory does not exist. Please configure a valid path in Tools menu.");
+        g_haldCLUTBasePath.clear();
+        SaveConfig();
+        g_haldCLUTPanelVisible = false;
+        return;
+    }
+
+    // Clear old data
+    g_haldCLUTCategories.clear();
+    g_selectedHaldCLUT.Reset();
+    if (g_haldCLUTImage) {
+        delete g_haldCLUTImage;
+        g_haldCLUTImage = nullptr;
+        g_haldCLUTBitmap = nullptr;
+    }
+
+    // Create progress tracking
+    LoadingProgress progress;
+    
+    // Show progress dialog
+    ShowLoadingProgressDialog(&progress);
+    
+    // Load in background thread
+    std::thread loadThread([&progress]() {
+        LoadHaldCLUTDirectoryRecursive(g_haldCLUTBasePath, L"HaldCLUT", &progress);
+        progress.completed.store(true);
+    });
+    
+    // Process messages while loading
+    MSG msg;
+    while (!progress.completed.load() && !progress.cancelled.load()) {
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                progress.cancelled.store(true);
+                // Re-post WM_QUIT so the outer message loop sees it
+                PostQuitMessage(static_cast<int>(msg.wParam));
+            } else if (!IsDialogMessageW(g_progressDialog, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        Sleep(10);
+    }
+    
+    loadThread.join();
+    CloseLoadingProgressDialog();
+    
+    if (progress.cancelled.load()) {
+        // User cancelled, clear partial data
+        g_haldCLUTCategories.clear();
+        g_haldCLUTPanelVisible = false;
+    } else {
+        UpdateHaldCLUTLayout();
+        InvalidateRect(g_haldCLUTPanel, nullptr, FALSE);
+        
+        // Update status
+        int totalCLUTs = 0;
+        for (const auto& cat : g_haldCLUTCategories) {
+            totalCLUTs += static_cast<int>(cat.entries.size());
+        }
+        std::wstring status = L"Loaded " + std::to_wstring(totalCLUTs) + L" HaldCLUTs in " + 
+                              std::to_wstring(g_haldCLUTCategories.size()) + L" categories";
+        SetWindowTextW(g_statusBar, status.c_str());
+    }
+}
+
+void UpdateHaldCLUTLayout() {
+    if (!g_haldCLUTPanel) return;
+
+    RECT rc{};
+    GetClientRect(g_haldCLUTPanel, &rc);
+    const int pageHeight = std::max<int>(0, rc.bottom - rc.top);
+
+    g_haldCLUTTotalHeight = 0;
+    // Header height
+    g_haldCLUTTotalHeight += 30;
+    // Original entry
+    g_haldCLUTTotalHeight += 24;
+
+    for (const auto& cat : g_haldCLUTCategories) {
+        g_haldCLUTTotalHeight += 26;  // Category header
+        if (cat.expanded) {
+            g_haldCLUTTotalHeight += static_cast<int>(cat.entries.size()) * 24;  // Entries
+        }
+    }
+
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = std::max(0, g_haldCLUTTotalHeight - 1);
+    si.nPage = static_cast<UINT>(pageHeight);
+    si.nPos = std::clamp(g_haldCLUTScrollPos, 0, std::max(0, g_haldCLUTTotalHeight - pageHeight));
+    g_haldCLUTScrollPos = si.nPos;
+    SetScrollInfo(g_haldCLUTPanel, SB_VERT, &si, TRUE);
+}
+
+void ScrollHaldCLUT(int delta) {
+    if (!g_haldCLUTPanel) return;
+
+    RECT rc{};
+    GetClientRect(g_haldCLUTPanel, &rc);
+    const int pageHeight = std::max<int>(0, rc.bottom - rc.top);
+    const int maxPos = std::max<int>(0, g_haldCLUTTotalHeight - pageHeight);
+    g_haldCLUTScrollPos = std::clamp(g_haldCLUTScrollPos + delta, 0, maxPos);
+
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_POS;
+    si.nPos = g_haldCLUTScrollPos;
+    SetScrollInfo(g_haldCLUTPanel, SB_VERT, &si, TRUE);
+    InvalidateRect(g_haldCLUTPanel, nullptr, FALSE);
+}
+
+void ApplyHaldCLUTToBitmap(Bitmap* source, Bitmap* clut, int level) {
+    if (g_haldCLUTApplyMode == HaldCLUTApplyMode::SmoothInterpolated) {
+        ApplyHaldCLUTToBitmapSmooth(source, clut, level);
+    } else {
+        ApplyHaldCLUTToBitmapMx(source, clut);
+    }
+}
+
+void ApplyHaldCLUTToBitmapMx(Bitmap* source, Bitmap* clut) {
+    if (!source || !clut) return;
+
+    int srcW = static_cast<int>(source->GetWidth());
+    int srcH = static_cast<int>(source->GetHeight());
+    int clutW = static_cast<int>(clut->GetWidth());
+    int clutH = static_cast<int>(clut->GetHeight());
+    if (clutW <= 0 || clutH <= 0 || clutW != clutH) {
+        return;
+    }
+
+    const int haldOrder = static_cast<int>(std::lround(std::pow(static_cast<double>(clutW), 1.0 / 3.0)));
+    const int cubeSize = haldOrder * haldOrder;
+    if (haldOrder <= 0 || cubeSize <= 1 || cubeSize * cubeSize * cubeSize != clutW * clutH) {
+        return;
+    }
+
+    Rect srcRect(0, 0, srcW, srcH);
+    BitmapData srcData;
+    if (source->LockBits(&srcRect, ImageLockModeRead | ImageLockModeWrite,
+                         PixelFormat32bppARGB, &srcData) != Ok) {
+        return;
+    }
+
+    Rect clutRect(0, 0, clutW, clutH);
+    BitmapData clutData;
+    if (clut->LockBits(&clutRect, ImageLockModeRead,
+                       PixelFormat32bppARGB, &clutData) != Ok) {
+        source->UnlockBits(&srcData);
+        return;
+    }
+
+    BYTE* srcPixels = static_cast<BYTE*>(srcData.Scan0);
+    BYTE* clutPixels = static_cast<BYTE*>(clutData.Scan0);
+    int srcStride = srcData.Stride;
+    int clutStride = clutData.Stride;
+
+    float scale = (cubeSize - 1) / 255.0f;
+    std::vector<int> channelLookup(256);
+    for (int i = 0; i < 256; ++i) {
+        channelLookup[i] = std::clamp(static_cast<int>(i * scale + 0.5f), 0, cubeSize - 1);
+    }
+
+    for (int y = 0; y < srcH; ++y) {
+        for (int x = 0; x < srcW; ++x) {
+            BYTE* pixel = srcPixels + y * srcStride + x * 4;
+            BYTE b = pixel[0];
+            BYTE g = pixel[1];
+            BYTE r = pixel[2];
+
+            const int clutR = channelLookup[r];
+            const int clutG = channelLookup[g];
+            const int clutB = channelLookup[b];
+            const int linearIndex = clutR + cubeSize * clutG + cubeSize * cubeSize * clutB;
+            const int clutX = linearIndex % clutW;
+            const int clutY = linearIndex / clutW;
+
+            if (clutX >= 0 && clutX < clutW && clutY >= 0 && clutY < clutH) {
+                BYTE* clutPixel = clutPixels + clutY * clutStride + clutX * 4;
+                pixel[0] = clutPixel[0];
+                pixel[1] = clutPixel[1];
+                pixel[2] = clutPixel[2];
+            }
+        }
+    }
+
+    clut->UnlockBits(&clutData);
+    source->UnlockBits(&srcData);
+}
+
+void ApplyHaldCLUTToBitmapSmooth(Bitmap* source, Bitmap* clut, int level) {
+    if (!source || !clut || level <= 0) return;
+
+    int srcW = static_cast<int>(source->GetWidth());
+    int srcH = static_cast<int>(source->GetHeight());
+    int clutW = static_cast<int>(clut->GetWidth());
+    int clutH = static_cast<int>(clut->GetHeight());
+    if (clutW <= 0 || clutH <= 0 || clutW != clutH) {
+        return;
+    }
+
+    const int cubeSize = level;
+    if (cubeSize <= 1 || cubeSize * cubeSize * cubeSize != clutW * clutH) {
+        return;
+    }
+
+    Rect srcRect(0, 0, srcW, srcH);
+    BitmapData srcData;
+    if (source->LockBits(&srcRect, ImageLockModeRead | ImageLockModeWrite,
+                         PixelFormat32bppARGB, &srcData) != Ok) {
+        return;
+    }
+
+    Rect clutRect(0, 0, clutW, clutH);
+    BitmapData clutData;
+    if (clut->LockBits(&clutRect, ImageLockModeRead,
+                       PixelFormat32bppARGB, &clutData) != Ok) {
+        source->UnlockBits(&srcData);
+        return;
+    }
+
+    BYTE* srcPixels = static_cast<BYTE*>(srcData.Scan0);
+    BYTE* clutPixels = static_cast<BYTE*>(clutData.Scan0);
+    int srcStride = srcData.Stride;
+    int clutStride = clutData.Stride;
+
+    float scale = (cubeSize - 1) / 255.0f;
+
+    struct ChannelLookup {
+        int low;
+        int high;
+        float fraction;
+    };
+
+    std::vector<ChannelLookup> channelLookup(256);
+    for (int i = 0; i < 256; ++i) {
+        float scaled = i * scale;
+        int low = static_cast<int>(scaled);
+        int high = std::min(low + 1, cubeSize - 1);
+        channelLookup[i] = {low, high, scaled - low};
+    }
+
+    auto ReadClutColor = [&](int rIndex, int gIndex, int bIndex, int channel) -> float {
+        const int linearIndex = bIndex * cubeSize * cubeSize + gIndex * cubeSize + rIndex;
+        const int clutX = linearIndex % clutW;
+        const int clutY = linearIndex / clutW;
+        BYTE* clutPixel = clutPixels + clutY * clutStride + clutX * 4;
+        return static_cast<float>(clutPixel[channel]);
+    };
+
+    auto Lerp = [](float a, float b, float t) -> float {
+        return a + (b - a) * t;
+    };
+
+    auto SampleClutChannel = [&](const ChannelLookup& rInfo, const ChannelLookup& gInfo,
+                                 const ChannelLookup& bInfo, int channel) -> BYTE {
+        float c000 = ReadClutColor(rInfo.low,  gInfo.low,  bInfo.low,  channel);
+        float c100 = ReadClutColor(rInfo.high, gInfo.low,  bInfo.low,  channel);
+        float c010 = ReadClutColor(rInfo.low,  gInfo.high, bInfo.low,  channel);
+        float c110 = ReadClutColor(rInfo.high, gInfo.high, bInfo.low,  channel);
+        float c001 = ReadClutColor(rInfo.low,  gInfo.low,  bInfo.high, channel);
+        float c101 = ReadClutColor(rInfo.high, gInfo.low,  bInfo.high, channel);
+        float c011 = ReadClutColor(rInfo.low,  gInfo.high, bInfo.high, channel);
+        float c111 = ReadClutColor(rInfo.high, gInfo.high, bInfo.high, channel);
+
+        float c00 = Lerp(c000, c100, rInfo.fraction);
+        float c10 = Lerp(c010, c110, rInfo.fraction);
+        float c01 = Lerp(c001, c101, rInfo.fraction);
+        float c11 = Lerp(c011, c111, rInfo.fraction);
+        float c0 = Lerp(c00, c10, gInfo.fraction);
+        float c1 = Lerp(c01, c11, gInfo.fraction);
+        float value = Lerp(c0, c1, bInfo.fraction);
+        return static_cast<BYTE>(std::clamp(value, 0.0f, 255.0f) + 0.5f);
+    };
+
+    for (int y = 0; y < srcH; ++y) {
+        for (int x = 0; x < srcW; ++x) {
+            BYTE* pixel = srcPixels + y * srcStride + x * 4;
+            const ChannelLookup& rInfo = channelLookup[pixel[2]];
+            const ChannelLookup& gInfo = channelLookup[pixel[1]];
+            const ChannelLookup& bInfo = channelLookup[pixel[0]];
+
+            pixel[0] = SampleClutChannel(rInfo, gInfo, bInfo, 0);
+            pixel[1] = SampleClutChannel(rInfo, gInfo, bInfo, 1);
+            pixel[2] = SampleClutChannel(rInfo, gInfo, bInfo, 2);
+        }
+    }
+
+    clut->UnlockBits(&clutData);
+    source->UnlockBits(&srcData);
+}
+
+void ClearLoadedHaldCLUT() {
+    if (g_haldCLUTImage) {
+        delete g_haldCLUTImage;
+        g_haldCLUTImage = nullptr;
+    }
+    g_haldCLUTBitmap = nullptr;
+}
+
+void LoadSelectedHaldCLUT() {
+    if (!g_selectedHaldCLUT.IsValid()) {
+        ClearLoadedHaldCLUT();
+        return;
+    }
+
+    HaldCLUTCategory& cat = g_haldCLUTCategories[g_selectedHaldCLUT.categoryIndex];
+    HaldCLUTEntry& entry = cat.entries[g_selectedHaldCLUT.entryIndex];
+
+    ClearLoadedHaldCLUT();
+
+    std::unique_ptr<Image> loadedImage(Image::FromFile(entry.path.c_str(), FALSE));
+    if (!loadedImage || loadedImage->GetLastStatus() != Ok) {
+        return;
+    }
+
+    Bitmap* normalizedBitmap = new Bitmap(entry.width, entry.height, PixelFormat32bppARGB);
+    if (!normalizedBitmap || normalizedBitmap->GetLastStatus() != Ok) {
+        delete normalizedBitmap;
+        return;
+    }
+
+    Graphics graphics(normalizedBitmap);
+    if (graphics.GetLastStatus() != Ok) {
+        delete normalizedBitmap;
+        return;
+    }
+
+    graphics.DrawImage(loadedImage.get(), 0, 0, entry.width, entry.height);
+    if (graphics.GetLastStatus() != Ok) {
+        delete normalizedBitmap;
+        return;
+    }
+
+    g_haldCLUTImage = normalizedBitmap;
+    g_haldCLUTBitmap = normalizedBitmap;
+}
+
+void ToggleHaldCLUTPanel() {
+    g_haldCLUTPanelVisible = !g_haldCLUTPanelVisible;
+
+    if (g_haldCLUTPanelVisible && g_haldCLUTCategories.empty()) {
+        LoadHaldCLUTDatabaseAsync();
+    }
+
+    if (g_haldCLUTPanel) {
+        ShowWindow(g_haldCLUTPanel, g_haldCLUTPanelVisible ? SW_SHOW : SW_HIDE);
+    }
+
+    LayoutChildren();
+    InvalidateRect(g_mainWindow, nullptr, FALSE);
+}
+
+LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE:
+        return 0;
+
+    case WM_SIZE:
+        UpdateHaldCLUTLayout();
+        return 0;
+
+    case WM_MOUSEWHEEL:
+        ScrollHaldCLUT(-(GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA) * 48);
+        return 0;
+
+    case WM_VSCROLL: {
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+
+        int newPos = si.nPos;
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:
+            newPos -= 48;
+            break;
+        case SB_LINEDOWN:
+            newPos += 48;
+            break;
+        case SB_PAGEUP:
+            newPos -= static_cast<int>(si.nPage);
+            break;
+        case SB_PAGEDOWN:
+            newPos += static_cast<int>(si.nPage);
+            break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION:
+            newPos = si.nTrackPos;
+            break;
+        }
+
+        g_haldCLUTScrollPos = std::clamp(newPos, si.nMin,
+                                         std::max(si.nMin, si.nMax - static_cast<int>(si.nPage) + 1));
+        si.fMask = SIF_POS;
+        si.nPos = g_haldCLUTScrollPos;
+        SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        int y = point.y + g_haldCLUTScrollPos - 30;  // Offset for header
+
+        int hoverIndex = -1;
+        bool hoverOriginal = false;
+        int currentY = 0;
+
+        if (y >= currentY && y < currentY + 24) {
+            hoverOriginal = true;
+        }
+        currentY += 24;
+
+        for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
+            if (y >= currentY && y < currentY + 26) {
+                hoverIndex = static_cast<int>(i);
+                break;
+            }
+            currentY += 26;
+
+            if (g_haldCLUTCategories[i].expanded) {
+                int entryCount = static_cast<int>(g_haldCLUTCategories[i].entries.size());
+                if (y >= currentY && y < currentY + entryCount * 24) {
+                    hoverIndex = static_cast<int>(i);
+                    break;
+                }
+                currentY += entryCount * 24;
+            }
+        }
+
+        if (hoverIndex != g_haldCLUTHoverIndex || hoverOriginal != g_haldCLUTHoverOriginal) {
+            g_haldCLUTHoverIndex = hoverIndex;
+            g_haldCLUTHoverOriginal = hoverOriginal;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+
+        if (g_haldCLUTPanel) {
+            TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        g_haldCLUTHoverIndex = -1;
+        g_haldCLUTHoverOriginal = false;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONUP: {
+        POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        RECT client{};
+        GetClientRect(hwnd, &client);
+
+        if (point.y >= 0 && point.y < 30 && point.x >= client.right - 100 && point.x < client.right) {
+            ShowConfigDialog(g_mainWindow ? g_mainWindow : hwnd);
+            return 0;
+        }
+
+        int y = point.y + g_haldCLUTScrollPos - 30;
+
+        int currentY = 0;
+        if (y >= currentY && y < currentY + 24) {
+            g_selectedHaldCLUT.Reset();
+            ClearLoadedHaldCLUT();
+            UpdateStatusBar();
+            if (g_mainWindow) {
+                SetFocus(g_mainWindow);
+            }
+            RedrawWindow(g_mainWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        currentY += 24;
+
+        for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
+            // Check category header click
+            if (y >= currentY && y < currentY + 26) {
+                g_haldCLUTCategories[i].expanded = !g_haldCLUTCategories[i].expanded;
+                UpdateHaldCLUTLayout();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            currentY += 26;
+
+            // Check entry clicks
+            if (g_haldCLUTCategories[i].expanded) {
+                int entryCount = static_cast<int>(g_haldCLUTCategories[i].entries.size());
+                for (int j = 0; j < entryCount; ++j) {
+                    if (y >= currentY && y < currentY + 24) {
+                        // Select this entry - use indices instead of pointer
+                        g_selectedHaldCLUT.categoryIndex = static_cast<int>(i);
+                        g_selectedHaldCLUT.entryIndex = j;
+                        LoadSelectedHaldCLUT();
+                        UpdateStatusBar();
+
+                        if (g_mainWindow) {
+                            SetFocus(g_mainWindow);
+                        }
+                        RedrawWindow(g_mainWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        return 0;
+                    }
+                    currentY += 24;
+                }
+            }
+        }
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        FillRect(dc, &client, g_brushPanel);
+
+        SetBkMode(dc, TRANSPARENT);
+        HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_uiFont));
+
+        int y = -g_haldCLUTScrollPos;
+
+        // Draw header
+        RECT headerRect = {0, y, client.right, y + 30};
+        FillRect(dc, &headerRect, g_brushHeader);
+        SetTextColor(dc, kColorTextPrimary);
+        SelectObject(dc, g_uiFontBold);
+        RECT textRect = {10, y, client.right - 10, y + 30};
+        DrawTextW(dc, L"HaldCLUT Filters", -1, &textRect, DT_VCENTER | DT_SINGLELINE);
+        
+        // Draw config button hint
+        SetTextColor(dc, kColorTextSecondary);
+        RECT hintRect = {client.right - 100, y, client.right - 10, y + 30};
+        DrawTextW(dc, L"[Configure]", -1, &hintRect, DT_VCENTER | DT_RIGHT | DT_SINGLELINE);
+        
+        y += 30;
+
+        SelectObject(dc, g_uiFont);
+
+        RECT originalRect = {20, y, client.right, y + 24};
+        bool isOriginalSelected = !g_selectedHaldCLUT.IsValid();
+        if (isOriginalSelected) {
+            HBRUSH selBrush = CreateSolidBrush(kColorAccent);
+            FillRect(dc, &originalRect, selBrush);
+            DeleteObject(selBrush);
+            SetTextColor(dc, kColorWindowBg);
+        } else if (g_haldCLUTHoverOriginal) {
+            FillRect(dc, &originalRect, g_brushHeaderHover);
+            SetTextColor(dc, kColorTextPrimary);
+        } else {
+            SetTextColor(dc, kColorTextPrimary);
+        }
+        RECT originalTextRect = {40, y, client.right - 10, y + 24};
+        DrawTextW(dc, L"Original", -1, &originalTextRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        y += 24;
+
+        // Draw categories and entries
+        for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
+            const auto& cat = g_haldCLUTCategories[i];
+
+            // Category header
+            RECT catRect = {0, y, client.right, y + 26};
+            if (static_cast<int>(i) == g_haldCLUTHoverIndex) {
+                FillRect(dc, &catRect, g_brushHeaderHover);
+            }
+
+            // Expand/collapse indicator
+            SetTextColor(dc, kColorTextSecondary);
+            RECT indicatorRect = {10, y, 30, y + 26};
+            DrawTextW(dc, cat.expanded ? L"-" : L"+", -1, &indicatorRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            // Category name
+            RECT nameRect = {30, y, client.right - 10, y + 26};
+            DrawTextW(dc, cat.name.c_str(), -1, &nameRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            y += 26;
+
+            // Entries
+            if (cat.expanded) {
+                for (size_t j = 0; j < cat.entries.size(); ++j) {
+                    RECT entryRect = {20, y, client.right, y + 24};
+
+                    // Check if this entry is selected
+                    bool isSelected = (g_selectedHaldCLUT.categoryIndex == static_cast<int>(i) && 
+                                       g_selectedHaldCLUT.entryIndex == static_cast<int>(j));
+                    if (isSelected) {
+                        HBRUSH selBrush = CreateSolidBrush(kColorAccent);
+                        FillRect(dc, &entryRect, selBrush);
+                        DeleteObject(selBrush);
+                        SetTextColor(dc, kColorWindowBg);
+                    } else {
+                        SetTextColor(dc, kColorTextPrimary);
+                    }
+
+                    RECT entryTextRect = {40, y, client.right - 10, y + 24};
+                    DrawTextW(dc, cat.entries[j].name.c_str(), -1, &entryTextRect,
+                              DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                    y += 24;
+                }
+            }
+        }
+
+        // Border
+        HPEN borderPen = CreatePen(PS_SOLID, 1, kColorBorder);
+        HPEN oldPen = static_cast<HPEN>(SelectObject(dc, borderPen));
+        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, client.left, client.top, client.right, client.bottom);
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(borderPen);
+
+        SelectObject(dc, oldFont);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
@@ -1152,12 +2442,17 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         g_metadataHeader = CreateWindowW(
             L"BUTTON", L"Generation Info <<",
-            WS_CHILD | BS_OWNERDRAW | WS_TABSTOP,
+            WS_CHILD | BS_OWNERDRAW,
             0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(1001), nullptr, nullptr);
         SendMessageW(g_metadataHeader, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
 
         g_metadataView = CreateWindowExW(
             0, kMetadataViewClassName, L"",
+            WS_CHILD | WS_VSCROLL,
+            0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+
+        g_haldCLUTPanel = CreateWindowExW(
+            0, kHaldCLUTViewClassName, L"",
             WS_CHILD | WS_VSCROLL,
             0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
 
@@ -1181,6 +2476,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 LayoutChildren();
                 FitToWindow();
                 InvalidateRect(hwnd, nullptr, FALSE);
+                SetFocus(hwnd);
             }
             return 0;
         }
@@ -1189,6 +2485,24 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         switch (LOWORD(wParam)) {
         case kMenuIdFileOpen:
             OpenImageDialog(hwnd);
+            return 0;
+        case kMenuIdFileSavePreviewAs:
+            SaveCurrentPreviewAs(hwnd);
+            return 0;
+        case kMenuIdViewHaldCLUT:
+            ToggleHaldCLUTPanel();
+            return 0;
+        case kMenuIdViewHaldCLUTModeMx:
+            g_haldCLUTApplyMode = HaldCLUTApplyMode::MxCompatible;
+            UpdateMenuState();
+            UpdateStatusBar();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case kMenuIdViewHaldCLUTModeSmooth:
+            g_haldCLUTApplyMode = HaldCLUTApplyMode::SmoothInterpolated;
+            UpdateMenuState();
+            UpdateStatusBar();
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case kMenuIdToolsAssociate:
             ShowAssociationDialog(hwnd);
@@ -1204,6 +2518,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 L"• Arrow keys / Mouse wheel - Navigate images\n"
                 L"• Page Up / Page Down - Zoom in / out\n"
                 L"• Delete - Delete current image\n"
+                L"• H - Toggle HaldCLUT panel\n"
+                L"• Space (hold) - Preview original image\n"
+                L"• File > Save Current Preview As... - Export the current LUT preview\n"
                 L"• Double-click - Open file dialog\n\n"
                 L"Visit GitHub: https://github.com/aiimagestudio/NoctisViewer";
             MessageBoxW(hwnd, aboutText.c_str(), L"About Noctis Viewer", MB_OK | MB_ICONINFORMATION);
@@ -1302,6 +2619,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_MOUSEWHEEL:
+        // Check if over metadata view
         if (g_panelVisible && !g_panelCollapsed && g_metadataView) {
             POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rc{};
@@ -1310,6 +2628,16 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 return SendMessageW(g_metadataView, msg, wParam, lParam);
             }
         }
+        // Check if over HaldCLUT panel BEFORE navigating images
+        if (g_haldCLUTPanelVisible && g_haldCLUTPanel) {
+            POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT rc{};
+            GetWindowRect(g_haldCLUTPanel, &rc);
+            if (PtInRect(&rc, point)) {
+                return SendMessageW(g_haldCLUTPanel, msg, wParam, lParam);
+            }
+        }
+        // Navigate images
         if (GET_WHEEL_DELTA_WPARAM(wParam) > 0) {
             NavigateRelative(-1);
         } else {
@@ -1341,8 +2669,26 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         case VK_DELETE:
             DeleteCurrentImage();
             return 0;
+        case 'H':
+        case 'h':
+            ToggleHaldCLUTPanel();
+            return 0;
+        case VK_SPACE:
+            if (!g_showingOriginal && g_selectedHaldCLUT.IsValid() && g_currentImage) {
+                g_showingOriginal = true;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
         default:
             break;
+        }
+        break;
+
+    case WM_KEYUP:
+        if (wParam == VK_SPACE && g_showingOriginal) {
+            g_showingOriginal = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
         }
         break;
 
@@ -1356,7 +2702,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         break;
     }
-
+    
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC dc = BeginPaint(hwnd, &ps);
@@ -1364,12 +2710,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         GetClientRect(hwnd, &client);
 
         HDC memoryDc = CreateCompatibleDC(dc);
-        HBITMAP backBuffer = CreateCompatibleBitmap(dc, client.right - client.left, client.bottom - client.top);
+        // Fix: Check for valid dimensions
+        int width = std::max<int>(1, static_cast<int>(client.right - client.left));
+        int height = std::max<int>(1, static_cast<int>(client.bottom - client.top));
+        HBITMAP backBuffer = CreateCompatibleBitmap(dc, width, height);
         HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, backBuffer));
 
         FillRect(memoryDc, &client, g_brushWindow);
         PaintImage(memoryDc);
-        BitBlt(dc, 0, 0, client.right - client.left, client.bottom - client.top, memoryDc, 0, 0, SRCCOPY);
+        BitBlt(dc, 0, 0, width, height, memoryDc, 0, 0, SRCCOPY);
 
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(backBuffer);
@@ -1389,6 +2738,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (g_currentImage) {
             delete g_currentImage;
             g_currentImage = nullptr;
+        }
+        if (g_haldCLUTImage) {
+            delete g_haldCLUTImage;
+            g_haldCLUTImage = nullptr;
+            g_haldCLUTBitmap = nullptr;  // Same object, don't double-delete
         }
         if (g_uiFont) {
             DeleteObject(g_uiFont);
@@ -1430,14 +2784,17 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int cmdShow) {
     GdiplusStartupInput gdiplusStartupInput;
     if (GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, nullptr) != Ok) {
-        MessageBoxW(nullptr, L"Failed to initialize GDI+.", L"Error", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to initialize GDI+", L"Error", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
+    icc.dwICC = ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS;
     InitCommonControlsEx(&icc);
+    
+    // Load configuration
+    LoadConfig();
 
     WNDCLASSEXW metadataClass{};
     metadataClass.cbSize = sizeof(metadataClass);
@@ -1450,7 +2807,43 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int cmdShow) {
                                                         IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
     metadataClass.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_NOCTIS_VIEWER_ICON),
                                                           IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
-    RegisterClassExW(&metadataClass);
+    // Fix: Check return value
+    if (!RegisterClassExW(&metadataClass)) {
+        MessageBoxW(nullptr, L"Failed to register metadata window class.", L"Error", MB_OK | MB_ICONERROR);
+        GdiplusShutdown(g_gdiplusToken);
+        return 1;
+    }
+
+    WNDCLASSEXW haldCLUTClass{};
+    haldCLUTClass.cbSize = sizeof(haldCLUTClass);
+    haldCLUTClass.lpfnWndProc = HaldCLUTViewProc;
+    haldCLUTClass.hInstance = instance;
+    haldCLUTClass.lpszClassName = kHaldCLUTViewClassName;
+    haldCLUTClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    haldCLUTClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    haldCLUTClass.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_NOCTIS_VIEWER_ICON),
+                                                        IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
+    haldCLUTClass.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_NOCTIS_VIEWER_ICON),
+                                                          IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
+    if (!RegisterClassExW(&haldCLUTClass)) {
+        MessageBoxW(nullptr, L"Failed to register HaldCLUT window class.", L"Error", MB_OK | MB_ICONERROR);
+        GdiplusShutdown(g_gdiplusToken);
+        return 1;
+    }
+    
+    // Register progress dialog class
+    WNDCLASSEXW progressClass{};
+    progressClass.cbSize = sizeof(progressClass);
+    progressClass.lpfnWndProc = ProgressDialogProc;
+    progressClass.hInstance = instance;
+    progressClass.lpszClassName = kProgressDialogClassName;
+    progressClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    progressClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    if (!RegisterClassExW(&progressClass)) {
+        MessageBoxW(nullptr, L"Failed to register progress dialog class.", L"Error", MB_OK | MB_ICONERROR);
+        GdiplusShutdown(g_gdiplusToken);
+        return 1;
+    }
 
     WNDCLASSEXW mainClass{};
     mainClass.cbSize = sizeof(mainClass);
@@ -1489,9 +2882,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int cmdShow) {
     const std::wstring commandLine = Trim(cmdLine ? cmdLine : L"");
     if (!commandLine.empty()) {
         std::wstring initialPath = commandLine;
+        // Fix: Better quote handling
         if (initialPath.size() >= 2 && initialPath.front() == L'"' && initialPath.back() == L'"') {
             initialPath = initialPath.substr(1, initialPath.size() - 2);
         }
+        // Handle unquoted paths with spaces (check if it's a valid file path)
+        else if (initialPath.front() == L'"') {
+            // Find matching quote
+            size_t endQuote = initialPath.find(L'"', 1);
+            if (endQuote != std::wstring::npos) {
+                initialPath = initialPath.substr(1, endQuote - 1);
+            }
+        }
+        
         if (IsSupportedImageFile(initialPath)) {
             LoadImageFile(initialPath);
         }

@@ -1,4 +1,4 @@
-# Noctis Viewer v1.1.0
+# Noctis Viewer v1.3.0
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -6,12 +6,8 @@ Noctis Viewer is a fast, minimal native image viewer for Windows, designed for q
 
 It is especially useful for AI image workflows: when a PNG contains WebUI-compatible generation metadata, Noctis Viewer shows it in a clean two-column side panel while intentionally ignoring ComfyUI workflow JSON.
 
-Noctis Viewer is built to solve two common pain points:
-
-1. Traditional image viewers are often too heavy, overloaded with features, and slower to launch than they need to be for everyday browsing.
-2. Traditional image viewers usually cannot display AI image generation metadata, which makes it inconvenient to quickly inspect prompts and parameters stored in local images.
-
 ![Noctis Viewer preview](assets/preview.png)
+![Noctis Viewer LUT preview](assets/preview_lut.png)
 
 ## Highlights
 
@@ -24,25 +20,27 @@ Noctis Viewer is built to solve two common pain points:
 - Double-click the empty area to open an image
 - Auto-fit to window on load and resize
 - Real-time zoom level display in status bar
-- Dark UI optimized for quick viewing
-- Metadata side panel with:
-  - 2-column table layout
-  - automatic text wrapping
-  - collapsible header
-  - click-to-copy value cells
-- `Delete` key support with confirmation dialog
+- Metadata side panel with click-to-copy values
+- HaldCLUT panel with recursive directory scan
+- `Original` entry to reset back to the unfiltered image
+- Hold `Space` to preview the original image while a LUT is active
+- HaldCLUT apply modes:
+  - `MX_LUT Compatible`
+  - `Smooth Interpolation`
+- `File > Save Current Preview As...` to export the current preview
 - File association support (add to "Open with" menu)
-- Menu bar with File, Tools, and Help options
-- Custom application icon included
+- Menu bar with File, View, Tools, and Help options
 
-## New in v1.1.0
+## New in v1.3.0
 
-- Added menu bar (File, Tools, Help)
-- Added zoom level display in status bar
-- Added file association feature (Tools → Set as Default Image Viewer)
-- Added "Visit GitHub" menu item
-- Added "About" dialog with version info
-- Fixed various UI improvements
+- Added HaldCLUT mode switching in the View menu
+- Added `Original` item at the top of the HaldCLUT panel
+- Added `Save Current Preview As...` for exporting the current LUT preview
+- Fixed HaldCLUT application to match ComfyUI `MX_LUT` behavior
+- Added an optional smooth interpolated LUT mode
+- Fixed `Space` key conflict with the Generation Info header
+- Fixed HaldCLUT selection and reset behavior
+- Fixed HaldCLUT panel `[Configure]` click handling
 
 ## Metadata Behavior
 
@@ -50,16 +48,6 @@ Noctis Viewer only shows WebUI-compatible metadata fields.
 
 - Supported: `parameters`, plain prompt text
 - Ignored on purpose: ComfyUI `prompt` / `workflow` JSON graphs
-
-This keeps the side panel focused and readable instead of dumping large workflow payloads.
-
-## Recommended ComfyUI Workflow
-
-For the best compatibility, it is recommended to save images in ComfyUI with the Prompt Saver Node from this project:
-
-https://github.com/receyuki/comfyui-prompt-reader-node
-
-Images saved with its Prompt Saver Node are a great match for Noctis Viewer and work especially well with the metadata panel in this project.
 
 ## Controls
 
@@ -69,24 +57,13 @@ Images saved with its Prompt Saver Node are a great match for Noctis Viewer and 
 - `Page Down`: zoom out
 - `Ctrl+O`: open file dialog
 - `Delete`: delete current image after confirmation
+- `H`: toggle HaldCLUT panel
+- `Space` (hold): preview original image while LUT is active
 - Mouse wheel: previous / next image
 - Double-click empty area: open image
 - Click metadata value cell: copy value to clipboard
-
-## Project Structure
-
-```text
-NoctisViewer/
-├── assets/
-│   ├── noctis_viewer.ico
-│   └── noctis_viewer_icon.png
-├── CMakeLists.txt
-├── noctis_viewer.cpp
-├── noctis_viewer.rc
-├── resource.h
-├── build_native.bat
-└── README.md
-```
+- Click a HaldCLUT entry: apply LUT
+- Click `Original` in the HaldCLUT panel: clear LUT selection
 
 ## Build
 
@@ -117,22 +94,13 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-Download the latest release:
-
-- `Noctis_Viewer-v1.1.0-x64.zip`
+- `Noctis_Viewer-v1.3.0-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
 
 ## GitHub
 
-https://github.com/aiimagestudio/NoctisViewer
-
-## Roadmap Ideas
-
-- Recycle Bin delete mode
-- Thumbnail strip or folder sidebar
-- Better image preloading for faster paging
-- Portable release packaging
+<https://github.com/aiimagestudio/NoctisViewer>
 
 ## License
 

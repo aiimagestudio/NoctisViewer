@@ -1,17 +1,13 @@
-# Noctis Viewer v1.1.0
+# Noctis Viewer v1.3.0
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
 Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注于快速打开、快速翻阅和快速查看 AI 图片生成信息。
 
-它主要解决两个常见痛点：
-
-1. 传统图片浏览器往往过于笨重，功能堆得很多，但日常高频真正会用到的功能并不多，同时启动速度也偏慢。
-2. 传统图片浏览器通常无法显示 AI 图片中保存的生成信息，导致本地图片的 prompt 和参数不方便快速查阅。
-
-对于 AI 图片工作流尤其如此：当 PNG 中包含 WebUI 兼容的生成信息时，Noctis Viewer 会在右侧以两列表格形式展示这些信息，并且刻意忽略 ComfyUI 的 workflow JSON，让界面保持清爽、可读。
+当 PNG 中包含 WebUI 兼容的生成信息时，Noctis Viewer 会在右侧以两列表格形式展示这些信息，并且刻意忽略 ComfyUI 的 workflow JSON，让界面保持清爽、可读。
 
 ![Noctis Viewer preview](assets/preview.png)
+![Noctis Viewer LUT preview](assets/preview_lut.png)
 
 ## 特性
 
@@ -24,25 +20,27 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 双击空白区打开图片
 - 加载时自动适应窗口，调整窗口大小时自动重新适应
 - 状态栏实时显示缩放比例
-- 深色界面
-- 右侧元数据面板支持：
-  - 两列表格显示
-  - 值内容自动换行
-  - 点击表头折叠 / 展开
-  - 点击值单元格复制内容
-- 支持 `Delete` 键删除当前图片，并带确认弹窗
-- 支持文件关联（添加到"打开方式"菜单）
-- 菜单栏支持（文件、工具、帮助）
-- 自带应用图标
+- 右侧元数据面板支持点击复制
+- HaldCLUT 面板支持递归扫描 LUT 目录
+- HaldCLUT 面板顶部提供 `Original`，可一键回到原图
+- 在 LUT 生效时按住 `Space` 可临时预览原图
+- HaldCLUT 提供两种应用模式：
+  - `MX_LUT Compatible`
+  - `Smooth Interpolation`
+- `文件 > Save Current Preview As...` 可导出当前预览结果
+- 支持文件关联（添加到“打开方式”菜单）
+- 菜单栏支持（文件、视图、工具、帮助）
 
-## v1.1.0 更新内容
+## v1.3.0 更新内容
 
-- 新增菜单栏（文件、工具、帮助）
-- 状态栏显示当前缩放比例
-- 新增文件关联功能（工具 → 设为默认图片查看器）
-- 新增"访问 GitHub"菜单项
-- 新增"关于"对话框显示版本信息
-- 修复多项 UI 问题
+- 在视图菜单中新增 HaldCLUT 模式切换
+- 在 HaldCLUT 面板顶部新增 `Original` 项
+- 新增 `Save Current Preview As...`，可导出当前 LUT 预览
+- 修复 HaldCLUT 应用逻辑，使其与 ComfyUI `MX_LUT` 更一致
+- 新增可选的平滑插值 LUT 模式
+- 修复 `Space` 键与 Generation Info 表头开合冲突
+- 修复 HaldCLUT 的选择与重置交互
+- 修复 HaldCLUT 面板中 `[Configure]` 的点击处理
 
 ## 元数据显示规则
 
@@ -50,16 +48,6 @@ Noctis Viewer 只显示 WebUI 兼容信息。
 
 - 支持：`parameters`、纯文本 prompt
 - 忽略：ComfyUI 的 `prompt` / `workflow` JSON
-
-这样可以避免在侧栏里堆满庞杂的工作流数据，让本地图片参数查阅更直接。
-
-## 推荐的 ComfyUI 保存方式
-
-建议在 ComfyUI 中使用下面这个项目里的 Prompt Saver Node 来保存图片：
-
-https://github.com/receyuki/comfyui-prompt-reader-node
-
-通过它的 Prompt Saver Node 保存出来的图片，与 Noctis Viewer 的兼容性很好，尤其适合配合本项目的元数据面板一起使用。
 
 ## 快捷键
 
@@ -69,24 +57,13 @@ https://github.com/receyuki/comfyui-prompt-reader-node
 - `Page Down`：缩小
 - `Ctrl+O`：打开文件对话框
 - `Delete`：删除当前图片（需确认）
+- `H`：切换 HaldCLUT 面板
+- `Space`：在 LUT 生效时按住临时预览原图
 - 鼠标滚轮：上一张 / 下一张
 - 双击空白区：打开图片
 - 点击元数据值单元格：复制值到剪贴板
-
-## 项目结构
-
-```text
-NoctisViewer/
-├── assets/
-│   ├── noctis_viewer.ico
-│   └── noctis_viewer_icon.png
-├── CMakeLists.txt
-├── noctis_viewer.cpp
-├── noctis_viewer.rc
-├── resource.h
-├── build_native.bat
-└── README.md
-```
+- 点击 HaldCLUT 条目：应用 LUT
+- 点击 `Original`：恢复原图显示
 
 ## 构建
 
@@ -117,23 +94,14 @@ bin\Release\Noctis_Viewer.exe
 
 ## 下载
 
-下载最新版本：
-
-- `Noctis_Viewer-v1.1.0-x64.zip`
+- `Noctis_Viewer-v1.3.0-x64.zip`
 
 解压后直接运行 `Noctis_Viewer.exe`，无需安装。
 
 ## GitHub
 
-https://github.com/aiimagestudio/NoctisViewer
-
-## 未来可扩展方向
-
-- 回收站删除模式
-- 缩略图栏 / 文件夹侧边栏
-- 翻页预加载
-- 更方便的便携版发布
+<https://github.com/aiimagestudio/NoctisViewer>
 
 ## License
 
-本项目当前使用 MIT License。详见 [LICENSE](LICENSE)。
+本项目采用 MIT License。详见 [LICENSE](LICENSE)。

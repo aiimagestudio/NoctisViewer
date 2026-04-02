@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(Noctis_Viewer VERSION 1.0 LANGUAGES CXX)
+project(Noctis_Viewer VERSION 1.3 LANGUAGES CXX)
 
 # C++17 standard
 set(CMAKE_CXX_STANDARD 17)
@@ -30,6 +30,7 @@ if(WIN32)
         comctl32
         oleaut32
         uuid
+        shlwapi
     )
 endif()
 

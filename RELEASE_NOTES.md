@@ -1,69 +1,57 @@
-# Noctis Viewer v1.1.0
+# Noctis Viewer v1.3.0
 
-Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing and clean metadata inspection.
+Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
 
-## What's New in v1.1.0
+## What's New in v1.3.0
 
 ### New Features
 
-- **Menu Bar**: Added File, Tools, and Help menus
-  - File → Open (Ctrl+O)
-  - Tools → Set as Default Image Viewer
-  - Help → Visit GitHub
-  - Help → About Noctis Viewer
+- **HaldCLUT Mode Switching**
+  - `MX_LUT Compatible` mode for ComfyUI-aligned results
+  - `Smooth Interpolation` mode for smoother LUT previews
 
-- **Zoom Level Display**: Real-time zoom percentage shown in status bar
-  - Updates when zooming with Page Up/Down
-  - Updates when fitting to window
-  - Only shows when an image is open
+- **Original Entry in HaldCLUT Panel**
+  - Fixed top-level `Original` item to return to the unfiltered image
+  - Keeps the HaldCLUT panel open while clearing the current LUT
 
-- **File Association**: Added ability to register with Windows
-  - Adds Noctis Viewer to "Open with" menu for image files
-  - Supports PNG, JPG, JPEG, BMP, GIF, TIFF
-  - Accessible via Tools menu
+- **Save Current Preview**
+  - Added `File > Save Current Preview As...`
+  - Exports the currently displayed preview with or without LUT applied
+  - Supports PNG, JPG, BMP, and TIFF output
 
-- **About Dialog**: Shows version info and keyboard shortcuts
-  - Includes GitHub repository link
-  - One-click visit to GitHub
+### Fixes
+
+- Fixed HaldCLUT application logic to match ComfyUI `MX_LUT` behavior
+- Fixed HaldCLUT panel selection and reset behavior
+- Fixed `Space` key conflict with the Generation Info header button
+- Fixed HaldCLUT panel `[Configure]` click handling
+- Removed temporary LUT debug text from the status bar
 
 ### Improvements
 
-- Added Ctrl+O keyboard shortcut for opening files
-- Fixed File menu Open command
-- Improved menu command handling
-- Various UI refinements
-
-## System Requirements
-
-- Windows 10/11 (x64)
-- No additional runtime dependencies
+- Status bar now keeps normal file and zoom information while indicating LUT mode
+- Added a higher-quality optional interpolated LUT mode
+- Improved HaldCLUT usability for quick A/B comparison
 
 ## Download
 
-- `Noctis_Viewer-v1.1.0-x64.zip`
+- `Noctis_Viewer-v1.3.0-x64.zip`
 
-Extract and run `Noctis_Viewer.exe`. No installation required.
+## Previous Versions
 
-## Previous Version: v1.0.0
+### v1.2.0
 
-Initial release with core features:
+- HaldCLUT support with recursive scanning and async loading
+- `config.ini` support for the HaldCLUT directory
+- Progress dialog for HaldCLUT database loading
 
-- Native Win32 + GDI+ application
-- Fast startup and small footprint
-- Dark UI with custom app icon
-- Browse PNG, JPG, JPEG, BMP, GIF, TIF, and TIFF
-- Arrow keys for previous / next image
-- `Page Up` / `Page Down` zoom controls
-- Auto-fit image on load and window resize
+### v1.1.0
+
+- Menu bar with File, Tools, and Help menus
+- Zoom level display in status bar
+- File association support
+
+### v1.0.0
+
+- Initial release with native Win32 + GDI+ image viewing
 - WebUI-compatible PNG metadata panel
-- Click metadata value cells to copy
-- `Delete` key support with confirmation dialog
-- Reduced paging flicker with double-buffered painting
-
-## GitHub
-
-https://github.com/aiimagestudio/NoctisViewer
-
-## License
-
-MIT License
