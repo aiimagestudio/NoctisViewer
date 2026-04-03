@@ -6,6 +6,8 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 
 当 PNG 中包含 WebUI 兼容的生成信息时，Noctis Viewer 会在右侧以两列表格形式展示这些信息，并且刻意忽略 ComfyUI 的 workflow JSON，让界面保持清爽、可读。
 
+从 v1.3 开始，Noctis Viewer 还内置了更强大的 HaldCLUT 工作流，支持实时浏览、预览、对比和导出 LUT 效果，因此它不仅适合查看提示词与生成参数，也非常适合快速检查图片调色结果。
+
 ![Noctis Viewer preview](assets/preview.png)
 ![Noctis Viewer LUT preview](assets/preview_lut.png)
 

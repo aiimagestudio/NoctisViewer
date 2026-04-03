@@ -6,6 +6,8 @@ Noctis Viewer is a fast, minimal native image viewer for Windows, designed for q
 
 It is especially useful for AI image workflows: when a PNG contains WebUI-compatible generation metadata, Noctis Viewer shows it in a clean two-column side panel while intentionally ignoring ComfyUI workflow JSON.
 
+Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT workflow for browsing, previewing, comparing, and exporting LUT-based looks in real time, making it a practical viewer for both prompt inspection and quick color grading review.
+
 ![Noctis Viewer preview](assets/preview.png)
 ![Noctis Viewer LUT preview](assets/preview_lut.png)
 
