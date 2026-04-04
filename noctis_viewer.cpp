@@ -56,7 +56,7 @@ constexpr UINT kProgressTimerId = 3001;
 constexpr UINT kProgressUpdateMsg = WM_USER + 100;
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.3.0";
+constexpr wchar_t kAppVersion[] = L"1.3.1";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -157,6 +157,12 @@ int g_currentIndex = -1;
 int g_metadataScrollPos = 0;
 int g_metadataTotalHeight = 0;
 float g_zoomLevel = 1.0f;
+int g_panOffsetX = 0;  // Horizontal pan offset
+int g_panOffsetY = 0;  // Vertical pan offset
+bool g_isDragging = false;
+POINT g_dragStartPos = {0, 0};
+int g_dragStartPanX = 0;
+int g_dragStartPanY = 0;
 
 bool g_panelVisible = false;
 bool g_panelCollapsed = false;
@@ -838,7 +844,7 @@ void UpdateStatusBar() {
                 : L" | LUT: Smooth";
         }
     } else {
-        text = L"Double-click the empty area to open an image | Arrow keys navigate | Page Up/Page Down zoom";
+        text = L"Double-click to open | Arrow keys/Mouse wheel navigate | Num +/- zoom | Drag to pan"; 
     }
     SetWindowTextW(g_statusBar, text.c_str());
 }
@@ -1004,6 +1010,8 @@ void FitToWindow() {
     const float scaleX = static_cast<float>(viewWidth) / static_cast<float>(imageWidth);
     const float scaleY = static_cast<float>(viewHeight) / static_cast<float>(imageHeight);
     g_zoomLevel = std::clamp(std::min(scaleX, scaleY), kMinZoom, 1.0f);
+    g_panOffsetX = 0;
+    g_panOffsetY = 0;
     UpdateStatusBar();
 }
 
@@ -1072,6 +1080,8 @@ void ClearViewerState() {
     g_currentIndex = -1;
     g_metadataScrollPos = 0;
     g_zoomLevel = 1.0f;
+    g_panOffsetX = 0;
+    g_panOffsetY = 0;
     g_showingOriginal = false;
     g_selectedHaldCLUT.Reset();
     ClearLoadedHaldCLUT();
@@ -1239,8 +1249,34 @@ void PaintImage(HDC dc) {
     const int viewWidth = viewport.right - viewport.left;
     const int viewHeight = viewport.bottom - viewport.top;
 
-    const int x = viewport.left + std::max(0, (viewWidth - drawWidth) / 2);
-    const int y = viewport.top + std::max(0, (viewHeight - drawHeight) / 2);
+    // Calculate base position (centered)
+    int baseX = viewport.left + (viewWidth - drawWidth) / 2;
+    int baseY = viewport.top + (viewHeight - drawHeight) / 2;
+    
+    // Apply pan offset
+    int x = baseX + g_panOffsetX;
+    int y = baseY + g_panOffsetY;
+    
+    // Clamp pan offset to keep image visible (allow some overscroll)
+    const int maxOverscroll = 50;
+    if (drawWidth > viewWidth) {
+        // Image wider than view: allow scrolling left/right
+        int minX = viewport.left + viewWidth - drawWidth - maxOverscroll;
+        int maxX = viewport.left + maxOverscroll;
+        x = std::clamp(x, minX, maxX);
+    } else {
+        // Image fits width: center it
+        x = baseX;
+    }
+    if (drawHeight > viewHeight) {
+        // Image taller than view: allow scrolling up/down
+        int minY = viewport.top + viewHeight - drawHeight - maxOverscroll;
+        int maxY = viewport.top + maxOverscroll;
+        y = std::clamp(y, minY, maxY);
+    } else {
+        // Image fits height: center it
+        y = baseY;
+    }
 
     // Check if we need to apply HaldCLUT
     bool shouldApplyCLUT = (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal);
@@ -1755,17 +1791,27 @@ void ShowLoadingProgressDialog(LoadingProgress* progress) {
     int x = rcParent.left + (rcParent.right - rcParent.left - 400) / 2;
     int y = rcParent.top + (rcParent.bottom - rcParent.top - 150) / 2;
     
+    // Create a modal-style progress dialog with TOPMOST to ensure it's visible
     g_progressDialog = CreateWindowExW(
-        WS_DLGFRAME | WS_CAPTION, kProgressDialogClassName,
+        WS_EX_TOPMOST | WS_EX_DLGMODALFRAME, kProgressDialogClassName,
         L"Loading HaldCLUT Database",
-        WS_VISIBLE | WS_POPUPWINDOW | WS_CAPTION,
-        x, y, 400, 150,
+        WS_VISIBLE | WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        x, y, 400, 180,
         g_mainWindow, nullptr, 
         reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(g_mainWindow, GWLP_HINSTANCE)),
         progress);
     
-    // Disable main window
+    // Disable main window to create modal behavior
     EnableWindow(g_mainWindow, FALSE);
+    
+    // Force the dialog to show and activate
+    if (g_progressDialog) {
+        ShowWindow(g_progressDialog, SW_SHOW);
+        SetForegroundWindow(g_progressDialog);
+        SetActiveWindow(g_progressDialog);
+        // Force immediate paint
+        UpdateWindow(g_progressDialog);
+    }
 }
 
 void CloseLoadingProgressDialog() {
@@ -2575,8 +2621,20 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_MOUSEMOVE: {
+        POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        
+        // Handle image panning
+        if (g_isDragging && g_currentImage) {
+            int deltaX = point.x - g_dragStartPos.x;
+            int deltaY = point.y - g_dragStartPos.y;
+            g_panOffsetX = g_dragStartPanX + deltaX;
+            g_panOffsetY = g_dragStartPanY + deltaY;
+            // Only invalidate the image viewport area to avoid panel flickering
+            RECT viewport = GetImageViewportRect();
+            InvalidateRect(hwnd, &viewport, FALSE);
+        }
+        
         if (g_metadataHeader) {
-            POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rc{};
             GetWindowRect(g_metadataHeader, &rc);
             MapWindowPoints(nullptr, hwnd, reinterpret_cast<LPPOINT>(&rc), 2);
@@ -2661,9 +2719,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             NavigateRelative(1);
             return 0;
         case VK_PRIOR:
+        case VK_ADD:
             ZoomIn();
             return 0;
         case VK_NEXT:
+        case VK_SUBTRACT:
             ZoomOut();
             return 0;
         case VK_DELETE:
@@ -2689,6 +2749,27 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             g_showingOriginal = false;
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        }
+        break;
+
+    case WM_LBUTTONDOWN: {
+        const int x = GET_X_LPARAM(lParam);
+        const int y = GET_Y_LPARAM(lParam);
+        RECT viewport = GetImageViewportRect();
+        if (g_currentImage && PtInRect(&viewport, POINT{x, y})) {
+            g_isDragging = true;
+            g_dragStartPos = {x, y};
+            g_dragStartPanX = g_panOffsetX;
+            g_dragStartPanY = g_panOffsetY;
+            SetCapture(hwnd);
+        }
+        break;
+    }
+
+    case WM_LBUTTONUP:
+        if (g_isDragging) {
+            g_isDragging = false;
+            ReleaseCapture();
         }
         break;
 

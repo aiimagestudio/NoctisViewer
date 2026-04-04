@@ -1,4 +1,4 @@
-# Noctis Viewer v1.3.0
+# Noctis Viewer v1.3.1
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -63,8 +63,8 @@ https://github.com/cedeber/hald-clut
 
 - `Left`、`Up`：上一张
 - `Right`、`Down`：下一张
-- `Page Up`：放大
-- `Page Down`：缩小
+- `Page Up` / `小键盘 +`：放大
+- `Page Down` / `小键盘 -`：缩小
 - `Ctrl+O`：打开文件对话框
 - `Delete`：删除当前图片（需确认）
 - `H`：切换 HaldCLUT 面板
@@ -72,6 +72,7 @@ https://github.com/cedeber/hald-clut
 - 鼠标滚轮：上一张 / 下一张
 - 双击空白区：打开图片
 - 点击元数据值单元格：复制值到剪贴板
+- 鼠标拖拽（放大时）：平移图片
 - 点击 HaldCLUT 条目：应用 LUT
 - 点击 `Original`：恢复原图显示
 

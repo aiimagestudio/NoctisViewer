@@ -1,6 +1,28 @@
-# Noctis Viewer v1.3.0
+# Noctis Viewer v1.3.1
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
+
+## What's New in v1.3.1
+
+### New Features
+
+- **Numeric Keypad Zoom Support**
+  - Added `Num +` / `Num -` keys for zooming in addition to Page Up/Page Down
+
+- **Mouse Drag Panning**
+  - When an image is zoomed larger than the viewport, you can now click and drag to pan the image
+  - Pan offset resets automatically when switching images or fitting to window
+
+### Fixes
+
+- **Fixed Panel Flickering During Drag**
+  - When dragging zoomed images with panels open, the panels no longer flicker
+  - Optimized redraw to only update the image viewport area
+
+- **Fixed HaldCLUT Loading Progress Dialog**
+  - Progress dialog now properly displays as a topmost modal window
+  - Fixed dialog height to fully show the Cancel button
+  - Dialog now forces immediate activation and visibility
 
 ## What's New in v1.3.0
 
@@ -35,7 +57,7 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
 
 ## Download
 
-- `Noctis_Viewer-v1.3.0-x64.zip`
+- `Noctis_Viewer-v1.3.1-x64.zip`
 
 ## Previous Versions
 

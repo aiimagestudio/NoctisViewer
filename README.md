@@ -1,4 +1,4 @@
-# Noctis Viewer v1.3.0
+# Noctis Viewer v1.3.1
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -63,8 +63,8 @@ Many thanks to the `hald-clut` project and its contributors for providing and ma
 
 - `Left`, `Up`: previous image
 - `Right`, `Down`: next image
-- `Page Up`: zoom in
-- `Page Down`: zoom out
+- `Page Up` / `Num +`: zoom in
+- `Page Down` / `Num -`: zoom out
 - `Ctrl+O`: open file dialog
 - `Delete`: delete current image after confirmation
 - `H`: toggle HaldCLUT panel
@@ -72,6 +72,7 @@ Many thanks to the `hald-clut` project and its contributors for providing and ma
 - Mouse wheel: previous / next image
 - Double-click empty area: open image
 - Click metadata value cell: copy value to clipboard
+- Drag with mouse (when zoomed): pan the image
 - Click a HaldCLUT entry: apply LUT
 - Click `Original` in the HaldCLUT panel: clear LUT selection
 

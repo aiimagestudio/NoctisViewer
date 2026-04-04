@@ -1,4 +1,4 @@
-# Noctis Viewer v1.3.0
+# Noctis Viewer v1.3.1
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -63,8 +63,8 @@ https://github.com/cedeber/hald-clut
 
 - `Left`、`Up`: 前の画像
 - `Right`、`Down`: 次の画像
-- `Page Up`: ズームイン
-- `Page Down`: ズームアウト
+- `Page Up` / `Num +`: ズームイン
+- `Page Down` / `Num -`: ズームアウト
 - `Ctrl+O`: ファイルダイアログを開く
 - `Delete`: 現在の画像を削除（確認あり）
 - `H`: HaldCLUT パネルの表示切替
@@ -72,6 +72,7 @@ https://github.com/cedeber/hald-clut
 - マウスホイール: 前 / 次の画像
 - 空白領域をダブルクリック: 画像を開く
 - メタデータ値セルをクリック: 値をコピー
+- マウスドラッグ（ズーム時）: 画像をパン
 - HaldCLUT 項目をクリック: LUT を適用
 - `Original` をクリック: 元画像表示に戻す
 
