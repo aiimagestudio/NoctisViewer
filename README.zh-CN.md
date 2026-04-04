@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.1
+# Noctis Viewer v1.4.2
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -29,6 +29,7 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 右侧元数据面板支持点击复制
 - HaldCLUT 面板支持递归扫描 LUT 目录
 - HaldCLUT 面板顶部提供 `Original`，可一键回到原图
+- **LUT 强度滑块**（0-100%）精细调节 LUT 效果强度
 - 在 LUT 生效时按住 `Space` 可临时预览原图
 - HaldCLUT 提供两种应用模式：
   - `MX_LUT Compatible`
@@ -37,6 +38,20 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 支持文件关联（添加到"打开方式"菜单）
 - 菜单栏支持（文件、视图、工具、帮助）
 - 双缓冲优化渲染，消除闪烁
+
+## v1.4.2 更新内容
+
+- **LUT 强度滑块**：实时调节 LUT 强度从 0-100%
+  - 位于 LUT 面板的 "Original" 项目下方
+  - 适合降低过于强烈的 LUT 效果（如漂白效果）
+  - 平滑拖动，延迟预览以获得更好性能
+- **修复 HaldCLUT Level 计算**：修正了 1728x1728 LUT 的层级检测（Level 12）
+
+## v1.4.1 更新内容
+
+- **重新设计 LUT 面板**：简化标题，可折叠面板，样式统一
+- **改进渲染**：修复折叠面板时的残影/伪影问题
+- **异步 LUT 选择**：点击时立即显示选中状态
 
 ## v1.4.0 更新内容
 

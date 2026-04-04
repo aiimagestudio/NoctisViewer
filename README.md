@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.1
+# Noctis Viewer v1.4.2
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -29,6 +29,7 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - Metadata side panel with click-to-copy values
 - HaldCLUT panel with recursive directory scan
 - `Original` entry to reset back to the unfiltered image
+- **LUT intensity slider** (0-100%) for fine-tuning LUT strength
 - Hold `Space` to preview the original image while a LUT is active
 - HaldCLUT apply modes:
   - `MX_LUT Compatible`
@@ -37,6 +38,20 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - File association support (add to "Open with" menu)
 - Menu bar with File, View, Tools, and Help options
 - Optimized rendering with double buffering to eliminate flickering
+
+## New in v1.4.2
+
+- **LUT Intensity Slider**: Adjust LUT strength from 0-100% in real-time
+  - Located below "Original" entry in the LUT panel
+  - Perfect for toning down aggressive LUTs (e.g., Bleach Bypass)
+  - Smooth dragging with delayed preview for better performance
+- **Fixed HaldCLUT Level Calculation**: Corrected level detection for 1728x1728 LUTs (Level 12)
+
+## New in v1.4.1
+
+- **Redesigned LUT Panel**: Simplified title, collapsible panel with matching style
+- **Improved Rendering**: Fixed ghosting/artifacts when collapsing panels
+- **Async LUT Selection**: Selection highlight appears immediately on click
 
 ## New in v1.4.0
 
