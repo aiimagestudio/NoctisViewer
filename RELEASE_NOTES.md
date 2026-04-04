@@ -1,10 +1,39 @@
-# Noctis Viewer v1.4.0
+# Noctis Viewer v1.4.1
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
 
-## What's New in v1.4.0
+## What's New in v1.4.1
 
-### New Features
+### UI Improvements
+
+- **Redesigned LUT Panel**
+  - Simplified title from "HaldCLUT Filters" to "LUT"
+  - Title height now matches Info panel for visual consistency
+  - Click the title bar to collapse/expand the panel
+  - Collapsed width matches Info panel (120px)
+
+- **Improved Button Labels**
+  - Changed "[Configure]" to "Load" to prevent text truncation
+  - Clearer indication of the button's purpose
+
+### Bug Fixes
+
+- **Fixed Panel Rendering Issues**
+  - Fixed ghosting/artifacts when collapsing panels
+  - Fixed white blocks appearing during window resize
+  - Full client area background erasure prevents visual glitches
+
+- **Fixed LUT Selection Highlight Delay**
+  - Selection highlight now appears immediately on click
+  - LUT file loading properly deferred using PostMessage
+
+---
+
+## Previous Versions
+
+### v1.4.0
+
+#### New Features
 
 - **High-DPI Display Support**
   - Added per-monitor DPI awareness for proper scaling on modern displays
@@ -22,7 +51,7 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
     - `SmoothingModeHighQuality` for smoother edges
     - `UnitPixel` for precise 1:1 pixel mapping (no automatic DPI scaling)
 
-### Performance & Visual Improvements
+#### Performance & Visual Improvements
 
 - **Drastically Reduced Flickering**
   - Implemented double buffering for Metadata and HaldCLUT panels
@@ -33,26 +62,15 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
   - When zoomed, click and drag to pan the image with hardware-accelerated smoothness
   - Pan state cached in backbuffer for lag-free dragging
 
-### Bug Fixes
+#### Bug Fixes
 
 - **Fixed LUT Panel Selection Delay**
   - Clicking a LUT entry now immediately shows the selection highlight
   - LUT file loading is properly deferred to prevent UI blocking
-  - Uses timer-based async loading for responsive feedback
 
 - **Fixed Fit-to-Window Zoom Calculation**
   - Removed incorrect margin subtraction that caused wrong zoom percentages
   - Now matches professional viewers (ACDSee) percentage display
-
-### Under the Hood
-
-- Added `GetDpiScale()` and `ScaleForDpi()` helper functions for consistent DPI handling
-- Implemented `EnsureBackbuffer()` and `ClearBackbufferCache()` for optimized rendering
-- All hardcoded sizes replaced with DPI-scaled equivalents
-
----
-
-## Previous Versions
 
 ### v1.3.1
 
@@ -88,7 +106,7 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
 
 ## Download
 
-- `Noctis_Viewer-v1.4.0-x64.zip`
+- `Noctis_Viewer-v1.4.1-x64.zip`
 
 ## System Requirements
 

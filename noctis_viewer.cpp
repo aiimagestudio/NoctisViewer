@@ -57,7 +57,7 @@ constexpr UINT kProgressUpdateMsg = WM_USER + 100;
 constexpr UINT kLoadHaldCLUTMsg = WM_USER + 200;  // Async LUT loading message
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.4.0";
+constexpr wchar_t kAppVersion[] = L"1.4.1";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;

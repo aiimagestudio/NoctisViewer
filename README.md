@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.0
+# Noctis Viewer v1.4.1
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -121,7 +121,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-- `Noctis_Viewer-v1.4.0-x64.zip`
+- `Noctis_Viewer-v1.4.1-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
 
