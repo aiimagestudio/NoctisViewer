@@ -1,4 +1,4 @@
-# Noctis Viewer v1.3.1
+# Noctis Viewer v1.4.0
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -15,13 +15,17 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 
 - Native Win32 + GDI+ application
 - Lightweight and fast startup
+- Full high-DPI display support (100% - 300% scaling)
 - Browse PNG, JPG, JPEG, BMP, GIF, TIF, and TIFF files
 - Arrow keys for previous / next image
 - `Page Up` / `Page Down` for zoom in / out
+- `Ctrl + Mouse wheel` for smooth zoom
+- `Home` / `End` to jump to first / last image
 - `Ctrl+O` to open file dialog
 - Double-click the empty area to open an image
 - Auto-fit to window on load and resize
 - Real-time zoom level display in status bar
+- Smooth mouse drag panning when zoomed
 - Metadata side panel with click-to-copy values
 - HaldCLUT panel with recursive directory scan
 - `Original` entry to reset back to the unfiltered image
@@ -32,17 +36,24 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - `File > Save Current Preview As...` to export the current preview
 - File association support (add to "Open with" menu)
 - Menu bar with File, View, Tools, and Help options
+- Optimized rendering with double buffering to eliminate flickering
 
-## New in v1.3.0
+## New in v1.4.0
 
-- Added HaldCLUT mode switching in the View menu
-- Added `Original` item at the top of the HaldCLUT panel
-- Added `Save Current Preview As...` for exporting the current LUT preview
-- Fixed HaldCLUT application to match ComfyUI `MX_LUT` behavior
-- Added an optional smooth interpolated LUT mode
-- Fixed `Space` key conflict with the Generation Info header
-- Fixed HaldCLUT selection and reset behavior
-- Fixed HaldCLUT panel `[Configure]` click handling
+- **High-DPI Display Support**: Per-monitor DPI awareness for crisp rendering on all displays
+- **Ctrl + Mouse Wheel**: Smooth zoom in/out with Ctrl key modifier
+- **Home / End Keys**: Quick navigation to first and last image
+- **Improved Image Quality**: Better scaling with high-quality GDI+ rendering settings
+- **Eliminated Panel Flickering**: Double buffering for smooth scrolling and dragging
+- **Cached Backbuffer**: Hardware-accelerated smooth panning when zoomed
+- **Async LUT Loading**: Responsive UI when selecting LUTs (selection updates immediately)
+
+## New in v1.3.1
+
+- Numeric keypad zoom support (`Num +` / `Num -`)
+- Mouse drag panning when zoomed
+- Fixed panel flickering during image drag
+- Fixed HaldCLUT loading progress dialog
 
 ## Metadata Behavior
 
@@ -61,26 +72,31 @@ Many thanks to the `hald-clut` project and its contributors for providing and ma
 
 ## Controls
 
-- `Left`, `Up`: previous image
-- `Right`, `Down`: next image
-- `Page Up` / `Num +`: zoom in
-- `Page Down` / `Num -`: zoom out
-- `Ctrl+O`: open file dialog
-- `Delete`: delete current image after confirmation
-- `H`: toggle HaldCLUT panel
-- `Space` (hold): preview original image while LUT is active
-- Mouse wheel: previous / next image
-- Double-click empty area: open image
-- Click metadata value cell: copy value to clipboard
-- Drag with mouse (when zoomed): pan the image
-- Click a HaldCLUT entry: apply LUT
-- Click `Original` in the HaldCLUT panel: clear LUT selection
+| Key | Action |
+|-----|--------|
+| `Left`, `Up` | Previous image |
+| `Right`, `Down` | Next image |
+| `Page Up`, `Num +` | Zoom in |
+| `Page Down`, `Num -` | Zoom out |
+| `Ctrl + Mouse wheel` | Zoom in / out |
+| `Home` | Jump to first image |
+| `End` | Jump to last image |
+| `Ctrl+O` | Open file dialog |
+| `Delete` | Delete current image (with confirmation) |
+| `H` | Toggle HaldCLUT panel |
+| `Space` (hold) | Preview original image while LUT is active |
+| Mouse wheel | Previous / next image |
+| Drag (when zoomed) | Pan the image |
+| Double-click empty area | Open image |
+| Click metadata value | Copy value to clipboard |
+| Click HaldCLUT entry | Apply LUT |
+| Click `Original` in HaldCLUT panel | Clear LUT selection |
 
 ## Build
 
 ### Requirements
 
-- Windows
+- Windows 10 or later
 - CMake 3.10+
 - Visual Studio Build Tools or Visual Studio with C++ workload
 
@@ -105,9 +121,15 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-- `Noctis_Viewer-v1.3.0-x64.zip`
+- `Noctis_Viewer-v1.4.0-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
+
+## System Requirements
+
+- Windows 10 or later
+- High-DPI display support (100% - 300% scaling tested)
+- No additional dependencies required
 
 ## GitHub
 

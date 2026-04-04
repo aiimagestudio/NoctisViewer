@@ -1,65 +1,71 @@
-# Noctis Viewer v1.3.1
+# Noctis Viewer v1.4.0
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
 
-## What's New in v1.3.1
+## What's New in v1.4.0
 
 ### New Features
 
-- **Numeric Keypad Zoom Support**
-  - Added `Num +` / `Num -` keys for zooming in addition to Page Up/Page Down
+- **High-DPI Display Support**
+  - Added per-monitor DPI awareness for proper scaling on modern displays
+  - All UI elements (panels, fonts, margins) now scale correctly with system DPI
+  - Minimum window size scales with DPI to maintain usability
 
-- **Mouse Drag Panning**
-  - When an image is zoomed larger than the viewport, you can now click and drag to pan the image
-  - Pan offset resets automatically when switching images or fitting to window
+- **Enhanced Zoom Controls**
+  - **Ctrl + Mouse Wheel**: Smooth zoom in/out at mouse position
+  - Home/End keys: Jump to first/last image in folder
 
-### Fixes
+- **Improved Image Quality**
+  - Fixed zoom-to-fit calculation to match ACDSee's percentage calculation
+  - Added high-quality rendering settings:
+    - `CompositingQualityHighQuality` for better alpha blending
+    - `SmoothingModeHighQuality` for smoother edges
+    - `UnitPixel` for precise 1:1 pixel mapping (no automatic DPI scaling)
 
-- **Fixed Panel Flickering During Drag**
-  - When dragging zoomed images with panels open, the panels no longer flicker
-  - Optimized redraw to only update the image viewport area
+### Performance & Visual Improvements
 
-- **Fixed HaldCLUT Loading Progress Dialog**
-  - Progress dialog now properly displays as a topmost modal window
-  - Fixed dialog height to fully show the Cancel button
-  - Dialog now forces immediate activation and visibility
+- **Drastically Reduced Flickering**
+  - Implemented double buffering for Metadata and HaldCLUT panels
+  - Added cached backbuffer system for smooth image panning when zoomed
+  - Optimized redraw to only update necessary regions
 
-## What's New in v1.3.0
+- **Smoother Panning**
+  - When zoomed, click and drag to pan the image with hardware-accelerated smoothness
+  - Pan state cached in backbuffer for lag-free dragging
 
-### New Features
+### Bug Fixes
 
-- **HaldCLUT Mode Switching**
-  - `MX_LUT Compatible` mode for ComfyUI-aligned results
-  - `Smooth Interpolation` mode for smoother LUT previews
+- **Fixed LUT Panel Selection Delay**
+  - Clicking a LUT entry now immediately shows the selection highlight
+  - LUT file loading is properly deferred to prevent UI blocking
+  - Uses timer-based async loading for responsive feedback
 
-- **Original Entry in HaldCLUT Panel**
-  - Fixed top-level `Original` item to return to the unfiltered image
-  - Keeps the HaldCLUT panel open while clearing the current LUT
+- **Fixed Fit-to-Window Zoom Calculation**
+  - Removed incorrect margin subtraction that caused wrong zoom percentages
+  - Now matches professional viewers (ACDSee) percentage display
 
-- **Save Current Preview**
-  - Added `File > Save Current Preview As...`
-  - Exports the currently displayed preview with or without LUT applied
-  - Supports PNG, JPG, BMP, and TIFF output
+### Under the Hood
 
-### Fixes
+- Added `GetDpiScale()` and `ScaleForDpi()` helper functions for consistent DPI handling
+- Implemented `EnsureBackbuffer()` and `ClearBackbufferCache()` for optimized rendering
+- All hardcoded sizes replaced with DPI-scaled equivalents
 
-- Fixed HaldCLUT application logic to match ComfyUI `MX_LUT` behavior
-- Fixed HaldCLUT panel selection and reset behavior
-- Fixed `Space` key conflict with the Generation Info header button
-- Fixed HaldCLUT panel `[Configure]` click handling
-- Removed temporary LUT debug text from the status bar
-
-### Improvements
-
-- Status bar now keeps normal file and zoom information while indicating LUT mode
-- Added a higher-quality optional interpolated LUT mode
-- Improved HaldCLUT usability for quick A/B comparison
-
-## Download
-
-- `Noctis_Viewer-v1.3.1-x64.zip`
+---
 
 ## Previous Versions
+
+### v1.3.1
+
+- **Numeric Keypad Zoom Support**: Added `Num +` / `Num -` keys for zooming
+- **Mouse Drag Panning**: Click and drag to pan zoomed images
+- **Fixed Panel Flickering During Drag**: Optimized redraw to prevent flicker
+- **Fixed HaldCLUT Loading Progress Dialog**: Modal dialog improvements
+
+### v1.3.0
+
+- **HaldCLUT Mode Switching**: MX_LUT Compatible and Smooth Interpolation modes
+- **Original Entry in HaldCLUT Panel**: Return to unfiltered image
+- **Save Current Preview As**: Export with or without LUT applied
 
 ### v1.2.0
 
@@ -77,3 +83,15 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
 
 - Initial release with native Win32 + GDI+ image viewing
 - WebUI-compatible PNG metadata panel
+
+---
+
+## Download
+
+- `Noctis_Viewer-v1.4.0-x64.zip`
+
+## System Requirements
+
+- Windows 10 or later
+- High-DPI display support (100% - 300% scaling tested)
+- No additional dependencies required

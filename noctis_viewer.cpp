@@ -38,7 +38,7 @@ const wchar_t* kConfigFileName = L"config.ini";
 
 constexpr int kMargin = 12;
 constexpr int kStatusHeightFallback = 24;
-constexpr int kPanelWidth = 420;
+constexpr int kPanelWidth = 280;  // Same width as HaldCLUT panel
 constexpr int kHaldCLUTPanelWidth = 280;
 
 // Menu IDs
@@ -54,9 +54,10 @@ constexpr UINT kMenuIdHelpAbout = 2202;
 // Progress dialog IDs
 constexpr UINT kProgressTimerId = 3001;
 constexpr UINT kProgressUpdateMsg = WM_USER + 100;
+constexpr UINT kLoadHaldCLUTMsg = WM_USER + 200;  // Async LUT loading message
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.3.1";
+constexpr wchar_t kAppVersion[] = L"1.4.0";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -182,6 +183,67 @@ Bitmap* g_haldCLUTBitmap = nullptr;  // Cached as Bitmap for faster access
 bool g_showingOriginal = false;
 std::wstring g_haldCLUTBasePath;
 HaldCLUTApplyMode g_haldCLUTApplyMode = HaldCLUTApplyMode::MxCompatible;
+
+// DPI scaling helper
+float GetDpiScale() {
+    HWND hwnd = g_mainWindow ? g_mainWindow : GetDesktopWindow();
+    UINT dpi = GetDpiForWindow(hwnd);
+    if (dpi == 0) dpi = 96;
+    return static_cast<float>(dpi) / 96.0f;
+}
+
+int ScaleForDpi(int value) {
+    return static_cast<int>(value * GetDpiScale());
+}
+
+// Cached backbuffer for smooth dragging
+HDC g_cachedMemoryDc = nullptr;
+HBITMAP g_cachedBitmap = nullptr;
+int g_cachedBufferWidth = 0;
+int g_cachedBufferHeight = 0;
+
+// Ensure the cached backbuffer matches the required size
+void EnsureBackbuffer(int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    
+    if (g_cachedMemoryDc && g_cachedBitmap && 
+        width == g_cachedBufferWidth && height == g_cachedBufferHeight) {
+        return; // Buffer is already the right size
+    }
+    
+    // Clean up old buffer
+    if (g_cachedMemoryDc) {
+        if (g_cachedBitmap) {
+            SelectObject(g_cachedMemoryDc, g_cachedBitmap); // Deselect bitmap before deleting
+            DeleteObject(g_cachedBitmap);
+            g_cachedBitmap = nullptr;
+        }
+        DeleteDC(g_cachedMemoryDc);
+        g_cachedMemoryDc = nullptr;
+    }
+    
+    // Create new buffer
+    HDC screenDc = GetDC(nullptr);
+    g_cachedMemoryDc = CreateCompatibleDC(screenDc);
+    g_cachedBitmap = CreateCompatibleBitmap(screenDc, width, height);
+    SelectObject(g_cachedMemoryDc, g_cachedBitmap);
+    g_cachedBufferWidth = width;
+    g_cachedBufferHeight = height;
+    ReleaseDC(nullptr, screenDc);
+}
+
+void ClearBackbufferCache() {
+    if (g_cachedMemoryDc) {
+        if (g_cachedBitmap) {
+            DeleteObject(g_cachedBitmap);
+            g_cachedBitmap = nullptr;
+        }
+        DeleteDC(g_cachedMemoryDc);
+        g_cachedMemoryDc = nullptr;
+    }
+    g_cachedBufferWidth = 0;
+    g_cachedBufferHeight = 0;
+}
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -814,12 +876,14 @@ int GetStatusBarHeight() {
 }
 
 int GetCurrentPanelWidth() {
+    float dpiScale = GetDpiScale();
     int width = 0;
     if (g_panelVisible) {
-        width += g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
+        int panelWidth = g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
+        width += static_cast<int>(panelWidth * dpiScale);
     }
     if (g_haldCLUTPanelVisible) {
-        width += kHaldCLUTPanelWidth;
+        width += static_cast<int>(kHaldCLUTPanelWidth * dpiScale);
     }
     return width;
 }
@@ -915,15 +979,20 @@ void RefreshMetadataPanel() {
     g_metadataScrollPos = 0;
 
     if (g_metadataHeader) {
-        const wchar_t* text = g_panelCollapsed ? L"Generation Info >>" : L"Generation Info <<";
+        const wchar_t* text = L"Info";
         SetWindowTextW(g_metadataHeader, text);
         ShowWindow(g_metadataHeader, g_panelVisible ? SW_SHOW : SW_HIDE);
     }
 
     if (g_metadataView) {
-        ShowWindow(g_metadataView, (g_panelVisible && !g_panelCollapsed) ? SW_SHOW : SW_HIDE);
-        RecalculateMetadataLayout();
-        InvalidateRect(g_metadataView, nullptr, FALSE);
+        bool shouldShow = g_panelVisible && !g_panelCollapsed;
+        ShowWindow(g_metadataView, shouldShow ? SW_SHOW : SW_HIDE);
+        if (shouldShow) {
+            RecalculateMetadataLayout();
+            // Force complete redraw with background erase to prevent ghosting
+            InvalidateRect(g_metadataView, nullptr, TRUE);
+            UpdateWindow(g_metadataView);
+        }
     }
 }
 
@@ -942,32 +1011,48 @@ void LayoutChildren(bool invalidateMainWindow = true) {
 
     const int statusHeight = GetStatusBarHeight();
     const int contentHeight = std::max<int>(0, client.bottom - statusHeight);
+    float dpiScale = GetDpiScale();
 
     // Calculate positions from right to left
     int rightEdge = client.right;
 
     // HaldCLUT panel is rightmost
     if (g_haldCLUTPanelVisible && g_haldCLUTPanel) {
-        MoveWindow(g_haldCLUTPanel, rightEdge - kHaldCLUTPanelWidth, 0, kHaldCLUTPanelWidth, contentHeight, TRUE);
+        int haldWidth = static_cast<int>(kHaldCLUTPanelWidth * dpiScale);
+        MoveWindow(g_haldCLUTPanel, rightEdge - haldWidth, 0, haldWidth, contentHeight, TRUE);
         ShowWindow(g_haldCLUTPanel, SW_SHOW);
-        rightEdge -= kHaldCLUTPanelWidth;
+        rightEdge -= haldWidth;
     } else if (g_haldCLUTPanel) {
         ShowWindow(g_haldCLUTPanel, SW_HIDE);
     }
 
     // Metadata panel is to the left of HaldCLUT
     if (g_panelVisible) {
-        int metaWidth = g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth;
+        int metaWidth = static_cast<int>((g_panelCollapsed ? kCollapsedPanelWidth : kPanelWidth) * dpiScale);
+        int headerHeight = static_cast<int>(kHeaderHeight * dpiScale);
         if (g_metadataHeader) {
-            MoveWindow(g_metadataHeader, rightEdge - metaWidth, 0, metaWidth, kHeaderHeight, TRUE);
+            MoveWindow(g_metadataHeader, rightEdge - metaWidth, 0, metaWidth, headerHeight, TRUE);
             ShowWindow(g_metadataHeader, SW_SHOW);
         }
         if (g_metadataView) {
-            if (!g_panelCollapsed) {
-                MoveWindow(g_metadataView, rightEdge - metaWidth, kHeaderHeight, metaWidth,
-                           std::max(0, contentHeight - kHeaderHeight), TRUE);
+            bool wasVisible = IsWindowVisible(g_metadataView);
+            bool shouldShow = !g_panelCollapsed;
+            
+            if (shouldShow) {
+                MoveWindow(g_metadataView, rightEdge - metaWidth, headerHeight, metaWidth,
+                           std::max(0, contentHeight - headerHeight), TRUE);
             }
-            ShowWindow(g_metadataView, !g_panelCollapsed ? SW_SHOW : SW_HIDE);
+            ShowWindow(g_metadataView, shouldShow ? SW_SHOW : SW_HIDE);
+            
+            // When hiding the panel, force main window repaint of that area to clear ghosting
+            if (wasVisible && !shouldShow && g_mainWindow) {
+                RECT oldPanelArea{rightEdge - metaWidth, headerHeight, rightEdge, contentHeight};
+                InvalidateRect(g_mainWindow, &oldPanelArea, TRUE);
+            }
+            // Force complete redraw when showing to prevent ghosting
+            if (shouldShow) {
+                InvalidateRect(g_metadataView, nullptr, TRUE);
+            }
         }
         rightEdge -= metaWidth;
     } else {
@@ -1092,7 +1177,7 @@ void ClearViewerState() {
     InvalidateRect(g_mainWindow, nullptr, FALSE);
 }
 
-bool LoadImageFile(const std::wstring& filePath) {
+bool LoadImageFile(const std::wstring& filePath, bool preserveViewState = false) {
     Image* image = Image::FromFile(filePath.c_str(), FALSE);
     if (!image || image->GetLastStatus() != Ok) {
         if (image) {
@@ -1111,8 +1196,16 @@ bool LoadImageFile(const std::wstring& filePath) {
     UpdateWindowTitle();
     UpdateStatusBar();
     LayoutChildren(false);
-    FitToWindow();
-    InvalidateRect(g_mainWindow, nullptr, FALSE);
+    
+    if (preserveViewState) {
+        // Keep current zoom and pan when navigating between images
+        // Just invalidate the image viewport to avoid full redraw flicker
+        RECT viewport = GetImageViewportRect();
+        InvalidateRect(g_mainWindow, &viewport, FALSE);
+    } else {
+        FitToWindow();
+        InvalidateRect(g_mainWindow, nullptr, FALSE);
+    }
     return true;
 }
 
@@ -1171,7 +1264,22 @@ void NavigateRelative(int offset) {
     if (nextIndex < 0 || nextIndex >= static_cast<int>(g_imageFiles.size())) {
         return;
     }
-    LoadImageFile(g_imageFiles[nextIndex]);
+    // Preserve zoom and pan state when navigating between images to reduce flicker
+    LoadImageFile(g_imageFiles[nextIndex], true);
+}
+
+void NavigateToFirst() {
+    if (g_imageFiles.empty()) {
+        return;
+    }
+    LoadImageFile(g_imageFiles[0], true);
+}
+
+void NavigateToLast() {
+    if (g_imageFiles.empty()) {
+        return;
+    }
+    LoadImageFile(g_imageFiles[g_imageFiles.size() - 1], true);
 }
 
 void OpenImageDialog(HWND owner) {
@@ -1282,20 +1390,59 @@ void PaintImage(HDC dc) {
     bool shouldApplyCLUT = (g_selectedHaldCLUT.IsValid() && g_haldCLUTBitmap && !g_showingOriginal);
 
     if (shouldApplyCLUT) {
-        Bitmap tempBitmap(imageWidth, imageHeight, PixelFormat32bppARGB);
+        // Create temp bitmap at display size to avoid double resampling
+        Bitmap tempBitmap(drawWidth, drawHeight, PixelFormat32bppARGB);
         if (tempBitmap.GetLastStatus() == Ok) {
-            Graphics tempGraphics(&tempBitmap);
-            tempGraphics.DrawImage(g_currentImage, 0, 0, imageWidth, imageHeight);
+            // First, draw and scale the image to target size
+            Graphics scaleGraphics(&tempBitmap);
+            scaleGraphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            scaleGraphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+            scaleGraphics.DrawImage(g_currentImage, 0, 0, drawWidth, drawHeight);
 
+            // Then apply HaldCLUT at display resolution
             HaldCLUTCategory& cat = g_haldCLUTCategories[g_selectedHaldCLUT.categoryIndex];
             HaldCLUTEntry& entry = cat.entries[g_selectedHaldCLUT.entryIndex];
             ApplyHaldCLUTToBitmap(&tempBitmap, g_haldCLUTBitmap, entry.level);
 
-            // Draw the result
+            // Draw the result directly (no further scaling)
             Graphics graphics(dc);
             graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
             graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
             graphics.DrawImage(&tempBitmap, x, y, drawWidth, drawHeight);
+            
+            // Draw LUT name overlay at top-left of the image
+            HaldCLUTCategory& displayCat = g_haldCLUTCategories[g_selectedHaldCLUT.categoryIndex];
+            HaldCLUTEntry& displayEntry = displayCat.entries[g_selectedHaldCLUT.entryIndex];
+            std::wstring lutName = displayEntry.name;
+            
+            // Use GDI (not GDI+) for text with background
+            int textX = x + 10;
+            int textY = y + 10;
+            
+            // Calculate text size first
+            RECT textRect = {0, 0, 0, 0};
+            DrawTextW(dc, lutName.c_str(), -1, &textRect, DT_CALCRECT | DT_SINGLELINE);
+            int textWidth = textRect.right - textRect.left;
+            int textHeight = textRect.bottom - textRect.top;
+            
+            // Draw semi-transparent background
+            RECT bgRect = {textX - 4, textY - 2, textX + textWidth + 8, textY + textHeight + 4};
+            COLORREF oldTextColor = SetTextColor(dc, RGB(255, 255, 255));
+            int oldBkMode = SetBkMode(dc, OPAQUE);
+            COLORREF oldBkColor = SetBkColor(dc, RGB(0, 0, 0));
+            
+            // Draw with a slight shadow effect
+            SetTextColor(dc, RGB(0, 0, 0));
+            RECT shadowRect = {textX + 1, textY + 1, textX + textWidth + 1, textY + textHeight + 1};
+            DrawTextW(dc, lutName.c_str(), -1, &shadowRect, DT_SINGLELINE);
+            
+            SetTextColor(dc, RGB(255, 255, 255));
+            RECT finalRect = {textX, textY, textX + textWidth, textY + textHeight};
+            DrawTextW(dc, lutName.c_str(), -1, &finalRect, DT_SINGLELINE);
+            
+            SetTextColor(dc, oldTextColor);
+            SetBkMode(dc, oldBkMode);
+            SetBkColor(dc, oldBkColor);
         } else {
             // Fallback if temp bitmap creation fails
             Graphics graphics(dc);
@@ -1307,6 +1454,10 @@ void PaintImage(HDC dc) {
         Graphics graphics(dc);
         graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+        graphics.SetCompositingQuality(CompositingQualityHighQuality);
+        graphics.SetSmoothingMode(SmoothingModeHighQuality);
+        // Disable automatic DPI scaling to ensure 1:1 pixel mapping
+        graphics.SetPageUnit(UnitPixel);
         graphics.DrawImage(g_currentImage, x, y, drawWidth, drawHeight);
     }
 }
@@ -1502,21 +1653,29 @@ LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         RECT client{};
         GetClientRect(hwnd, &client);
-        FillRect(dc, &client, g_brushPanel);
+        int width = client.right - client.left;
+        int height = client.bottom - client.top;
+        
+        // Double buffering to prevent flickering during scroll
+        HDC memoryDc = CreateCompatibleDC(dc);
+        HBITMAP backBuffer = CreateCompatibleBitmap(dc, width, height);
+        HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, backBuffer));
 
-        const int contentWidth = client.right - client.left;
+        FillRect(memoryDc, &client, g_brushPanel);
+
+        const int contentWidth = width;
         const int keyWidth = std::min(kKeyColumnWidth, std::max(80, contentWidth / 3));
 
-        SetBkMode(dc, TRANSPARENT);
-        HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_uiFont));
+        SetBkMode(memoryDc, TRANSPARENT);
+        HFONT oldFont = static_cast<HFONT>(SelectObject(memoryDc, g_uiFont));
 
         int y = -g_metadataScrollPos;
         for (size_t i = 0; i < g_metadataEntries.size(); ++i) {
             const MetadataEntry& entry = g_metadataEntries[i];
             RECT rowRect = {0, y, contentWidth, y + entry.height};
-            if (rowRect.bottom >= 0 && rowRect.top <= client.bottom) {
+            if (rowRect.bottom >= 0 && rowRect.top <= height) {
                 HBRUSH rowBrush = CreateSolidBrush((i % 2 == 0) ? kColorPanelRowA : kColorPanelRowB);
-                FillRect(dc, &rowRect, rowBrush);
+                FillRect(memoryDc, &rowRect, rowBrush);
                 DeleteObject(rowBrush);
 
                 RECT keyRect = {rowRect.left + kRowPaddingX, rowRect.top + kRowPaddingY,
@@ -1524,35 +1683,43 @@ LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 RECT valueRect = {rowRect.left + keyWidth + kRowPaddingX, rowRect.top + kRowPaddingY,
                                   rowRect.right - kRowPaddingX, rowRect.bottom - kRowPaddingY};
 
-                SelectObject(dc, g_uiFontBold);
-                SetTextColor(dc, kColorTextSecondary);
-                DrawTextW(dc, entry.key.c_str(), -1, &keyRect, DT_WORDBREAK | DT_EDITCONTROL);
+                SelectObject(memoryDc, g_uiFontBold);
+                SetTextColor(memoryDc, kColorTextSecondary);
+                DrawTextW(memoryDc, entry.key.c_str(), -1, &keyRect, DT_WORDBREAK | DT_EDITCONTROL);
 
-                SelectObject(dc, g_uiFont);
-                SetTextColor(dc, kColorTextPrimary);
-                DrawTextW(dc, entry.value.c_str(), -1, &valueRect, DT_WORDBREAK | DT_EDITCONTROL);
+                SelectObject(memoryDc, g_uiFont);
+                SetTextColor(memoryDc, kColorTextPrimary);
+                DrawTextW(memoryDc, entry.value.c_str(), -1, &valueRect, DT_WORDBREAK | DT_EDITCONTROL);
 
                 HPEN pen = CreatePen(PS_SOLID, 1, kColorBorder);
-                HPEN oldPen = static_cast<HPEN>(SelectObject(dc, pen));
-                MoveToEx(dc, keyWidth, rowRect.top, nullptr);
-                LineTo(dc, keyWidth, rowRect.bottom);
-                MoveToEx(dc, rowRect.left, rowRect.bottom - 1, nullptr);
-                LineTo(dc, rowRect.right, rowRect.bottom - 1);
-                SelectObject(dc, oldPen);
+                HPEN oldPen = static_cast<HPEN>(SelectObject(memoryDc, pen));
+                MoveToEx(memoryDc, keyWidth, rowRect.top, nullptr);
+                LineTo(memoryDc, keyWidth, rowRect.bottom);
+                MoveToEx(memoryDc, rowRect.left, rowRect.bottom - 1, nullptr);
+                LineTo(memoryDc, rowRect.right, rowRect.bottom - 1);
+                SelectObject(memoryDc, oldPen);
                 DeleteObject(pen);
             }
             y += entry.height;
         }
 
         HPEN borderPen = CreatePen(PS_SOLID, 1, kColorBorder);
-        HPEN oldBorderPen = static_cast<HPEN>(SelectObject(dc, borderPen));
-        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, client.left, client.top, client.right, client.bottom);
-        SelectObject(dc, oldBrush);
-        SelectObject(dc, oldBorderPen);
+        HPEN oldBorderPen = static_cast<HPEN>(SelectObject(memoryDc, borderPen));
+        HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
+        Rectangle(memoryDc, client.left, client.top, client.right, client.bottom);
+        SelectObject(memoryDc, oldBrush);
+        SelectObject(memoryDc, oldBorderPen);
         DeleteObject(borderPen);
 
-        SelectObject(dc, oldFont);
+        SelectObject(memoryDc, oldFont);
+        
+        // Copy to screen
+        BitBlt(dc, 0, 0, width, height, memoryDc, 0, 0, SRCCOPY);
+        
+        SelectObject(memoryDc, oldBitmap);
+        DeleteObject(backBuffer);
+        DeleteDC(memoryDc);
+        
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -1710,22 +1877,34 @@ LRESULT CALLBACK ProgressDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
         s_progress = reinterpret_cast<LoadingProgress*>(cs->lpCreateParams);
         
+        // Get DPI scale for proper sizing
+        float dpiScale = GetDpiScale();
+        int margin = static_cast<int>(20 * dpiScale);
+        int dlgWidth = static_cast<int>(400 * dpiScale);
+        int btnWidth = static_cast<int>(80 * dpiScale);
+        int btnHeight = static_cast<int>(25 * dpiScale);
+        int progressHeight = static_cast<int>(20 * dpiScale);
+        int textHeight = static_cast<int>(30 * dpiScale);
+        
         // Create progress bar
         HWND hProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
-            20, 60, 360, 20, hwnd, reinterpret_cast<HMENU>(1), nullptr, nullptr);
+            margin, static_cast<int>(60 * dpiScale), dlgWidth - 2 * margin, progressHeight, 
+            hwnd, reinterpret_cast<HMENU>(1), nullptr, nullptr);
         SendMessageW(hProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
         SendMessageW(hProgress, PBM_SETPOS, 0, 0);
         
-        // Create cancel button
+        // Create cancel button (centered)
         CreateWindowExW(0, L"BUTTON", L"Cancel",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            160, 100, 80, 25, hwnd, reinterpret_cast<HMENU>(2), nullptr, nullptr);
+            (dlgWidth - btnWidth) / 2, static_cast<int>(100 * dpiScale), btnWidth, btnHeight, 
+            hwnd, reinterpret_cast<HMENU>(2), nullptr, nullptr);
         
         // Create status text
         CreateWindowExW(0, L"STATIC", L"Scanning HaldCLUT files...",
             WS_CHILD | WS_VISIBLE | SS_CENTER,
-            20, 20, 360, 30, hwnd, reinterpret_cast<HMENU>(3), nullptr, nullptr);
+            margin, margin, dlgWidth - 2 * margin, textHeight, 
+            hwnd, reinterpret_cast<HMENU>(3), nullptr, nullptr);
         
         // Start timer for updates
         SetTimer(hwnd, kProgressTimerId, 50, nullptr);
@@ -1785,18 +1964,23 @@ LRESULT CALLBACK ProgressDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 void ShowLoadingProgressDialog(LoadingProgress* progress) {
     if (!g_mainWindow) return;
     
+    // Get DPI scale for proper sizing
+    float dpiScale = GetDpiScale();
+    int dlgWidth = static_cast<int>(400 * dpiScale);
+    int dlgHeight = static_cast<int>(180 * dpiScale);
+    
     // Center on parent
     RECT rcParent;
     GetWindowRect(g_mainWindow, &rcParent);
-    int x = rcParent.left + (rcParent.right - rcParent.left - 400) / 2;
-    int y = rcParent.top + (rcParent.bottom - rcParent.top - 150) / 2;
+    int x = rcParent.left + (rcParent.right - rcParent.left - dlgWidth) / 2;
+    int y = rcParent.top + (rcParent.bottom - rcParent.top - dlgHeight) / 2;
     
     // Create a modal-style progress dialog with TOPMOST to ensure it's visible
     g_progressDialog = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_DLGMODALFRAME, kProgressDialogClassName,
         L"Loading HaldCLUT Database",
         WS_VISIBLE | WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        x, y, 400, 180,
+        x, y, dlgWidth, dlgHeight,
         g_mainWindow, nullptr, 
         reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(g_mainWindow, GWLP_HINSTANCE)),
         progress);
@@ -2309,11 +2493,16 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             g_selectedHaldCLUT.Reset();
             ClearLoadedHaldCLUT();
             UpdateStatusBar();
+            
+            // Force immediate repaint of the panel to show selection change
+            InvalidateRect(hwnd, nullptr, FALSE);
+            UpdateWindow(hwnd);  // Synchronously process WM_PAINT immediately
+            
             if (g_mainWindow) {
                 SetFocus(g_mainWindow);
+                // Post message to update main window image after UI is refreshed
+                PostMessage(g_mainWindow, kLoadHaldCLUTMsg, 0, 0);
             }
-            RedrawWindow(g_mainWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         currentY += 24;
@@ -2336,14 +2525,22 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                         // Select this entry - use indices instead of pointer
                         g_selectedHaldCLUT.categoryIndex = static_cast<int>(i);
                         g_selectedHaldCLUT.entryIndex = j;
-                        LoadSelectedHaldCLUT();
+                        
+                        // Immediately update status bar
                         UpdateStatusBar();
-
+                        
+                        // Force immediate repaint of the panel to show selection BEFORE any blocking operation
+                        // Invalidate the entire panel to ensure proper redraw
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        UpdateWindow(hwnd);  // Synchronously process WM_PAINT immediately
+                        
+                        // Set focus to main window and defer LUT loading
+                        // Use PostMessage instead of SetTimer for more predictable timing
                         if (g_mainWindow) {
                             SetFocus(g_mainWindow);
+                            // Post the load message to the back of the queue, allowing paint messages to process first
+                            PostMessage(g_mainWindow, kLoadHaldCLUTMsg, 0, 0);
                         }
-                        RedrawWindow(g_mainWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-                        InvalidateRect(hwnd, nullptr, FALSE);
                         return 0;
                     }
                     currentY += 24;
@@ -2362,45 +2559,53 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         RECT client{};
         GetClientRect(hwnd, &client);
-        FillRect(dc, &client, g_brushPanel);
+        int width = client.right - client.left;
+        int height = client.bottom - client.top;
+        
+        // Double buffering to prevent flickering during scroll
+        HDC memoryDc = CreateCompatibleDC(dc);
+        HBITMAP backBuffer = CreateCompatibleBitmap(dc, width, height);
+        HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, backBuffer));
 
-        SetBkMode(dc, TRANSPARENT);
-        HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_uiFont));
+        FillRect(memoryDc, &client, g_brushPanel);
+
+        SetBkMode(memoryDc, TRANSPARENT);
+        HFONT oldFont = static_cast<HFONT>(SelectObject(memoryDc, g_uiFont));
 
         int y = -g_haldCLUTScrollPos;
 
         // Draw header
-        RECT headerRect = {0, y, client.right, y + 30};
-        FillRect(dc, &headerRect, g_brushHeader);
-        SetTextColor(dc, kColorTextPrimary);
-        SelectObject(dc, g_uiFontBold);
-        RECT textRect = {10, y, client.right - 10, y + 30};
-        DrawTextW(dc, L"HaldCLUT Filters", -1, &textRect, DT_VCENTER | DT_SINGLELINE);
+        RECT headerRect = {0, y, width, y + 30};
+        FillRect(memoryDc, &headerRect, g_brushHeader);
+        SetTextColor(memoryDc, kColorTextPrimary);
+        SelectObject(memoryDc, g_uiFontBold);
+        RECT textRect = {10, y, width - 10, y + 30};
+        DrawTextW(memoryDc, L"HaldCLUT Filters", -1, &textRect, DT_VCENTER | DT_SINGLELINE);
         
         // Draw config button hint
-        SetTextColor(dc, kColorTextSecondary);
-        RECT hintRect = {client.right - 100, y, client.right - 10, y + 30};
-        DrawTextW(dc, L"[Configure]", -1, &hintRect, DT_VCENTER | DT_RIGHT | DT_SINGLELINE);
+        SetTextColor(memoryDc, kColorTextSecondary);
+        RECT hintRect = {width - 100, y, width - 10, y + 30};
+        DrawTextW(memoryDc, L"[Configure]", -1, &hintRect, DT_VCENTER | DT_RIGHT | DT_SINGLELINE);
         
         y += 30;
 
-        SelectObject(dc, g_uiFont);
+        SelectObject(memoryDc, g_uiFont);
 
-        RECT originalRect = {20, y, client.right, y + 24};
+        RECT originalRect = {20, y, width, y + 24};
         bool isOriginalSelected = !g_selectedHaldCLUT.IsValid();
         if (isOriginalSelected) {
             HBRUSH selBrush = CreateSolidBrush(kColorAccent);
-            FillRect(dc, &originalRect, selBrush);
+            FillRect(memoryDc, &originalRect, selBrush);
             DeleteObject(selBrush);
-            SetTextColor(dc, kColorWindowBg);
+            SetTextColor(memoryDc, kColorWindowBg);
         } else if (g_haldCLUTHoverOriginal) {
-            FillRect(dc, &originalRect, g_brushHeaderHover);
-            SetTextColor(dc, kColorTextPrimary);
+            FillRect(memoryDc, &originalRect, g_brushHeaderHover);
+            SetTextColor(memoryDc, kColorTextPrimary);
         } else {
-            SetTextColor(dc, kColorTextPrimary);
+            SetTextColor(memoryDc, kColorTextPrimary);
         }
-        RECT originalTextRect = {40, y, client.right - 10, y + 24};
-        DrawTextW(dc, L"Original", -1, &originalTextRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT originalTextRect = {40, y, width - 10, y + 24};
+        DrawTextW(memoryDc, L"Original", -1, &originalTextRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         y += 24;
 
         // Draw categories and entries
@@ -2408,40 +2613,40 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             const auto& cat = g_haldCLUTCategories[i];
 
             // Category header
-            RECT catRect = {0, y, client.right, y + 26};
+            RECT catRect = {0, y, width, y + 26};
             if (static_cast<int>(i) == g_haldCLUTHoverIndex) {
-                FillRect(dc, &catRect, g_brushHeaderHover);
+                FillRect(memoryDc, &catRect, g_brushHeaderHover);
             }
 
             // Expand/collapse indicator
-            SetTextColor(dc, kColorTextSecondary);
+            SetTextColor(memoryDc, kColorTextSecondary);
             RECT indicatorRect = {10, y, 30, y + 26};
-            DrawTextW(dc, cat.expanded ? L"-" : L"+", -1, &indicatorRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(memoryDc, cat.expanded ? L"-" : L"+", -1, &indicatorRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
             // Category name
-            RECT nameRect = {30, y, client.right - 10, y + 26};
-            DrawTextW(dc, cat.name.c_str(), -1, &nameRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            RECT nameRect = {30, y, width - 10, y + 26};
+            DrawTextW(memoryDc, cat.name.c_str(), -1, &nameRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             y += 26;
 
             // Entries
             if (cat.expanded) {
                 for (size_t j = 0; j < cat.entries.size(); ++j) {
-                    RECT entryRect = {20, y, client.right, y + 24};
+                    RECT entryRect = {20, y, width, y + 24};
 
                     // Check if this entry is selected
                     bool isSelected = (g_selectedHaldCLUT.categoryIndex == static_cast<int>(i) && 
                                        g_selectedHaldCLUT.entryIndex == static_cast<int>(j));
                     if (isSelected) {
                         HBRUSH selBrush = CreateSolidBrush(kColorAccent);
-                        FillRect(dc, &entryRect, selBrush);
+                        FillRect(memoryDc, &entryRect, selBrush);
                         DeleteObject(selBrush);
-                        SetTextColor(dc, kColorWindowBg);
+                        SetTextColor(memoryDc, kColorWindowBg);
                     } else {
-                        SetTextColor(dc, kColorTextPrimary);
+                        SetTextColor(memoryDc, kColorTextPrimary);
                     }
 
-                    RECT entryTextRect = {40, y, client.right - 10, y + 24};
-                    DrawTextW(dc, cat.entries[j].name.c_str(), -1, &entryTextRect,
+                    RECT entryTextRect = {40, y, width - 10, y + 24};
+                    DrawTextW(memoryDc, cat.entries[j].name.c_str(), -1, &entryTextRect,
                               DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                     y += 24;
                 }
@@ -2450,14 +2655,22 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         // Border
         HPEN borderPen = CreatePen(PS_SOLID, 1, kColorBorder);
-        HPEN oldPen = static_cast<HPEN>(SelectObject(dc, borderPen));
-        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, client.left, client.top, client.right, client.bottom);
-        SelectObject(dc, oldBrush);
-        SelectObject(dc, oldPen);
+        HPEN oldPen = static_cast<HPEN>(SelectObject(memoryDc, borderPen));
+        HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
+        Rectangle(memoryDc, client.left, client.top, client.right, client.bottom);
+        SelectObject(memoryDc, oldBrush);
+        SelectObject(memoryDc, oldPen);
         DeleteObject(borderPen);
 
-        SelectObject(dc, oldFont);
+        SelectObject(memoryDc, oldFont);
+        
+        // Copy to screen
+        BitBlt(dc, 0, 0, width, height, memoryDc, 0, 0, SRCCOPY);
+        
+        SelectObject(memoryDc, oldBitmap);
+        DeleteObject(backBuffer);
+        DeleteDC(memoryDc);
+        
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -2487,7 +2700,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         CreateMainMenu(hwnd);
 
         g_metadataHeader = CreateWindowW(
-            L"BUTTON", L"Generation Info <<",
+            L"BUTTON", L"Info",
             WS_CHILD | BS_OWNERDRAW,
             0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(1001), nullptr, nullptr);
         SendMessageW(g_metadataHeader, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
@@ -2562,7 +2775,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 L"Supports PNG, JPG, BMP, GIF, and TIFF formats.\n\n"
                 L"Keyboard shortcuts:\n"
                 L"• Arrow keys / Mouse wheel - Navigate images\n"
+                L"• Home / End - Jump to first / last image\n"
                 L"• Page Up / Page Down - Zoom in / out\n"
+                L"• Ctrl + Mouse wheel - Zoom in / out\n"
                 L"• Delete - Delete current image\n"
                 L"• H - Toggle HaldCLUT panel\n"
                 L"• Space (hold) - Preview original image\n"
@@ -2613,25 +2828,56 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
     }
 
+    case WM_TIMER:
+        if (wParam == kLoadHaldCLUTMsg) {
+            KillTimer(hwnd, kLoadHaldCLUTMsg);
+            // FALL THROUGH to custom message handler for LUT loading
+        }
+        return 0;
+    
+    case kLoadHaldCLUTMsg:
+        // Load LUT file - this is posted via PostMessage to ensure UI updates first
+        LoadSelectedHaldCLUT();
+        UpdateStatusBar();
+        // Invalidate the main image viewport to show the LUT effect
+        if (g_currentImage) {
+            RECT viewport = GetImageViewportRect();
+            InvalidateRect(hwnd, &viewport, FALSE);
+        }
+        return 0;
+
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-        info->ptMinTrackSize.x = kMinWindowWidth;
-        info->ptMinTrackSize.y = kMinWindowHeight;
+        float dpiScale = GetDpiScale();
+        info->ptMinTrackSize.x = static_cast<int>(kMinWindowWidth * dpiScale);
+        info->ptMinTrackSize.y = static_cast<int>(kMinWindowHeight * dpiScale);
         return 0;
     }
 
     case WM_MOUSEMOVE: {
         POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         
-        // Handle image panning
+        // Handle image panning with cached backbuffer for smooth dragging
         if (g_isDragging && g_currentImage) {
             int deltaX = point.x - g_dragStartPos.x;
             int deltaY = point.y - g_dragStartPos.y;
             g_panOffsetX = g_dragStartPanX + deltaX;
             g_panOffsetY = g_dragStartPanY + deltaY;
-            // Only invalidate the image viewport area to avoid panel flickering
-            RECT viewport = GetImageViewportRect();
-            InvalidateRect(hwnd, &viewport, FALSE);
+            
+            // Direct paint using cached backbuffer - only paint viewport area
+            HDC dc = GetDC(hwnd);
+            if (dc && g_cachedMemoryDc) {
+                RECT viewport = GetImageViewportRect();
+                int viewWidth = std::max<int>(1, viewport.right - viewport.left);
+                int viewHeight = std::max<int>(1, viewport.bottom - viewport.top);
+                
+                RECT bufRect = {0, 0, viewWidth, viewHeight};
+                FillRect(g_cachedMemoryDc, &bufRect, g_brushWindow);
+                PaintImage(g_cachedMemoryDc);
+                BitBlt(dc, 0, 0, viewWidth, viewHeight, g_cachedMemoryDc, 0, 0, SRCCOPY);
+                
+                ReleaseDC(hwnd, dc);
+            }
         }
         
         if (g_metadataHeader) {
@@ -2654,12 +2900,6 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             g_headerHot = false;
             InvalidateRect(g_metadataHeader, nullptr, FALSE);
         }
-        return 0;
-
-    case WM_SIZE:
-        LayoutChildren();
-        FitToWindow();
-        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_DROPFILES: {
@@ -2695,6 +2935,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 return SendMessageW(g_haldCLUTPanel, msg, wParam, lParam);
             }
         }
+        // Check for Ctrl+Wheel zoom
+        if (GetKeyState(VK_CONTROL) & 0x8000) {
+            if (GET_WHEEL_DELTA_WPARAM(wParam) > 0) {
+                ZoomIn();
+            } else {
+                ZoomOut();
+            }
+            return 0;
+        }
         // Navigate images
         if (GET_WHEEL_DELTA_WPARAM(wParam) > 0) {
             NavigateRelative(-1);
@@ -2728,6 +2977,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return 0;
         case VK_DELETE:
             DeleteCurrentImage();
+            return 0;
+        case VK_HOME:
+            NavigateToFirst();
+            return 0;
+        case VK_END:
+            NavigateToLast();
             return 0;
         case 'H':
         case 'h':
@@ -2784,34 +3039,44 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         break;
     }
     
+    case WM_SIZE:
+        // Clear cached buffer on resize - it will be recreated with new size when needed
+        ClearBackbufferCache();
+        LayoutChildren(false);
+        FitToWindow();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC dc = BeginPaint(hwnd, &ps);
-        RECT client{};
-        GetClientRect(hwnd, &client);
-
-        HDC memoryDc = CreateCompatibleDC(dc);
-        // Fix: Check for valid dimensions
-        int width = std::max<int>(1, static_cast<int>(client.right - client.left));
-        int height = std::max<int>(1, static_cast<int>(client.bottom - client.top));
-        HBITMAP backBuffer = CreateCompatibleBitmap(dc, width, height);
-        HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memoryDc, backBuffer));
-
-        FillRect(memoryDc, &client, g_brushWindow);
-        PaintImage(memoryDc);
-        BitBlt(dc, 0, 0, width, height, memoryDc, 0, 0, SRCCOPY);
-
-        SelectObject(memoryDc, oldBitmap);
-        DeleteObject(backBuffer);
-        DeleteDC(memoryDc);
+        
+        // Only paint the image viewport area, not the entire client area
+        // The panels are child windows and handle their own painting
+        RECT viewport = GetImageViewportRect();
+        int viewWidth = std::max<int>(1, viewport.right - viewport.left);
+        int viewHeight = std::max<int>(1, viewport.bottom - viewport.top);
+        
+        // Use cached backbuffer sized to viewport for smooth rendering
+        EnsureBackbuffer(viewWidth, viewHeight);
+        if (g_cachedMemoryDc) {
+            // Fill and paint only the viewport area
+            RECT bufRect = {0, 0, viewWidth, viewHeight};
+            FillRect(g_cachedMemoryDc, &bufRect, g_brushWindow);
+            PaintImage(g_cachedMemoryDc);
+            
+            // Copy only the viewport area to screen
+            BitBlt(dc, 0, 0, viewWidth, viewHeight, g_cachedMemoryDc, 0, 0, SRCCOPY);
+        }
+        
         EndPaint(hwnd, &ps);
         return 0;
     }
 
     case WM_ERASEBKGND: {
-        RECT client{};
-        GetClientRect(hwnd, &client);
-        FillRect(reinterpret_cast<HDC>(wParam), &client, g_brushWindow);
+        // Only erase the viewport area, not where panels are
+        RECT viewport = GetImageViewportRect();
+        FillRect(reinterpret_cast<HDC>(wParam), &viewport, g_brushWindow);
         return 1;
     }
 
@@ -2853,6 +3118,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             DeleteObject(g_brushStatus);
             g_brushStatus = nullptr;
         }
+        ClearBackbufferCache();
         PostQuitMessage(0);
         return 0;
     }
@@ -2863,6 +3129,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int cmdShow) {
+    // Enable per-monitor DPI awareness for proper scaling on high-DPI displays
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    
     GdiplusStartupInput gdiplusStartupInput;
     if (GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, nullptr) != Ok) {
         MessageBoxW(nullptr, L"Failed to initialize GDI+", L"Error", MB_OK | MB_ICONERROR);
@@ -2945,10 +3214,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int cmdShow) {
         return 1;
     }
 
+    // Get system DPI to scale default window size
+    UINT dpi = GetDpiForSystem();
+    if (dpi == 0) dpi = 96;
+    float dpiScale = static_cast<float>(dpi) / 96.0f;
+    int defaultWidth = static_cast<int>(1280 * dpiScale);
+    int defaultHeight = static_cast<int>(820 * dpiScale);
+
     HWND hwnd = CreateWindowExW(
         0, kMainClassName, kWindowTitle,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820,
+        CW_USEDEFAULT, CW_USEDEFAULT, defaultWidth, defaultHeight,
         nullptr, nullptr, instance, nullptr);
 
     if (!hwnd) {
