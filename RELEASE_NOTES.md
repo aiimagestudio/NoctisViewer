@@ -1,10 +1,38 @@
-# Noctis Viewer v1.4.1
+# Noctis Viewer v1.4.2
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
 
-## What's New in v1.4.1
+## What's New in v1.4.2
 
-### UI Improvements
+### New Features
+
+- **LUT Intensity Slider**
+  - Added intensity control (0-100%) in HaldCLUT panel
+  - Located below "Original" entry when a LUT is selected
+  - Real-time preview with smooth dragging
+  - Perfect for toning down aggressive LUTs (e.g., Bleach Bypass)
+
+### Bug Fixes
+
+- **Fixed HaldCLUT Level Calculation**
+  - Corrected level detection for 1728x1728 LUTs (Level 12)
+  - Was incorrectly calculating as Level 144
+  - Both MX and Smooth modes now work correctly
+
+### Improvements
+
+- **Smoother LUT Application**
+  - Dragging intensity slider now uses delayed update (50ms)
+  - Eliminates lag during rapid adjustments
+  - Final value applied immediately on mouse release
+
+---
+
+## Previous Versions
+
+### v1.4.1
+
+#### UI Improvements
 
 - **Redesigned LUT Panel**
   - Simplified title from "HaldCLUT Filters" to "LUT"
@@ -16,7 +44,7 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
   - Changed "[Configure]" to "Load" to prevent text truncation
   - Clearer indication of the button's purpose
 
-### Bug Fixes
+#### Bug Fixes
 
 - **Fixed Panel Rendering Issues**
   - Fixed ghosting/artifacts when collapsing panels
@@ -26,10 +54,6 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
 - **Fixed LUT Selection Highlight Delay**
   - Selection highlight now appears immediately on click
   - LUT file loading properly deferred using PostMessage
-
----
-
-## Previous Versions
 
 ### v1.4.0
 
@@ -48,68 +72,115 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
   - Fixed zoom-to-fit calculation to match ACDSee's percentage calculation
   - Added high-quality rendering settings:
     - `CompositingQualityHighQuality` for better alpha blending
-    - `SmoothingModeHighQuality` for smoother edges
-    - `UnitPixel` for precise 1:1 pixel mapping (no automatic DPI scaling)
+    - `PixelOffsetModeHighQuality` for sub-pixel precision
+  - Eliminated image shifting when zooming past 100%
+  - Fixed single-pixel gaps when zooming above 400%
 
-#### Performance & Visual Improvements
+#### UI Improvements
 
-- **Drastically Reduced Flickering**
-  - Implemented double buffering for Metadata and HaldCLUT panels
-  - Added cached backbuffer system for smooth image panning when zoomed
-  - Optimized redraw to only update necessary regions
+- **Metadata Panel Enhancements**
+  - Changed "Prompt" label to "Generation Info" for clarity
+  - Added dark gray border line on the left edge
+  - Key column now has distinct background color for better readability
+  - Row height reduced to 28px for more compact display
 
-- **Smoother Panning**
-  - When zoomed, click and drag to pan the image with hardware-accelerated smoothness
-  - Pan state cached in backbuffer for lag-free dragging
+- **Navigation Feedback**
+  - Added visual feedback during image loading
+  - Status bar updates immediately on navigation attempt
 
 #### Bug Fixes
 
-- **Fixed LUT Panel Selection Delay**
-  - Clicking a LUT entry now immediately shows the selection highlight
-  - LUT file loading is properly deferred to prevent UI blocking
+- **Image Loading**
+  - Fixed intermittent blank window on first image load
+  - GDI+ initialization now explicitly loads BMP, GIF, JPEG, PNG, and TIFF codecs
+  - Ensures reliable image format support
 
-- **Fixed Fit-to-Window Zoom Calculation**
-  - Removed incorrect margin subtraction that caused wrong zoom percentages
-  - Now matches professional viewers (ACDSee) percentage display
+- **Window State**
+  - Fixed window opening at wrong position when previously closed while maximized
+  - Now correctly restores non-maximized position before showing
+
+- **Status Bar**
+  - Fixed wrong format/size display when opening multiple files at once
+  - Status bar now updates correctly after the first successful image load
+
+- **Memory Management**
+  - Fixed potential memory leak in metadata panel custom draw
+  - Fixed potential crash when rapidly navigating images
 
 ### v1.3.1
 
-- **Numeric Keypad Zoom Support**: Added `Num +` / `Num -` keys for zooming
-- **Mouse Drag Panning**: Click and drag to pan zoomed images
-- **Fixed Panel Flickering During Drag**: Optimized redraw to prevent flicker
-- **Fixed HaldCLUT Loading Progress Dialog**: Modal dialog improvements
+#### New Features
+
+- **LUT Modes**
+  - Added two HaldCLUT application modes:
+    - **MX_LUT Compatible**: Fast nearest-neighbor lookup
+    - **Smooth Interpolation**: High-quality trilinear interpolation for smoother color transitions
+  - Toggle via View → HaldCLUT Mode menu
+
+#### UI Improvements
+
+- **Better Default Panel State**
+  - Metadata panel now starts collapsed to maximize image viewing area
+
+#### Bug Fixes
+
+- **DPI Scaling**
+  - Fixed window size calculation on high-DPI displays
+  - Status bar no longer cut off at high zoom levels
+
+- **Performance**
+  - Improved image navigation responsiveness
 
 ### v1.3.0
 
-- **HaldCLUT Mode Switching**: MX_LUT Compatible and Smooth Interpolation modes
-- **Original Entry in HaldCLUT Panel**: Return to unfiltered image
-- **Save Current Preview As**: Export with or without LUT applied
+#### New Features
 
-### v1.2.0
+- **HaldCLUT Color Grading**
+  - Real-time color lookup table (CLUT) application
+  - Supports industry-standard HaldCLUT PNG files
+  - Configurable directory for CLUT library
+  - Organized by category folders
+  - Hold Space to compare original vs graded image
 
-- HaldCLUT support with recursive scanning and async loading
-- `config.ini` support for the HaldCLUT directory
-- Progress dialog for HaldCLUT database loading
+#### UI Improvements
+
+- **Dual Panel System**
+  - Left panel: Image generation metadata (from PNG chunks)
+  - Right panel: HaldCLUT filter selection
+  - Both panels independently collapsible
+
+- **Metadata Display**
+  - Custom-drawn metadata panel with alternating row colors
+  - Click to copy values to clipboard
+  - Scrollable long content
+  - Prompt parsing for WebUI-compatible PNG files
 
 ### v1.1.0
 
-- Menu bar with File, Tools, and Help menus
-- Zoom level display in status bar
-- File association support
+#### Core Features
 
-### v1.0.0
+- **Image Viewing**
+  - Native Win32 + GDI+ for zero dependencies
+  - Supports PNG, JPG, BMP, GIF, TIFF
+  - Fast folder navigation with arrow keys and mouse wheel
+  - Drag & drop support
 
-- Initial release with native Win32 + GDI+ image viewing
-- WebUI-compatible PNG metadata panel
+- **Zoom & Pan**
+  - Smooth zoom: Ctrl + Mouse Wheel, Page Up/Down, Num+/Num-
+  - Click and drag to pan zoomed images
+  - Zoom to fit with single key (Home)
 
----
+- **File Operations**
+  - Delete with confirmation (Delete key)
+  - Copy to clipboard
+  - Double-click empty area to open file dialog
 
-## Download
+- **UI Design**
+  - Clean dark theme optimized for image viewing
+  - Metadata panel for PNG generation parameters
+  - Status bar with image dimensions, file size, zoom level
+  - High-DPI aware display scaling
 
-- `Noctis_Viewer-v1.4.1-x64.zip`
+## License
 
-## System Requirements
-
-- Windows 10 or later
-- High-DPI display support (100% - 300% scaling tested)
-- No additional dependencies required
+MIT License - See LICENSE file for details

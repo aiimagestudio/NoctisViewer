@@ -55,9 +55,10 @@ constexpr UINT kMenuIdHelpAbout = 2202;
 constexpr UINT kProgressTimerId = 3001;
 constexpr UINT kProgressUpdateMsg = WM_USER + 100;
 constexpr UINT kLoadHaldCLUTMsg = WM_USER + 200;  // Async LUT loading message
+constexpr UINT kLUTIntensityTimerId = 3002;       // Delayed LUT intensity update
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.4.1";
+constexpr wchar_t kAppVersion[] = L"1.4.2";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -153,6 +154,7 @@ HBRUSH g_brushPanel = nullptr;
 HBRUSH g_brushHeader = nullptr;
 HBRUSH g_brushHeaderHover = nullptr;
 HBRUSH g_brushStatus = nullptr;
+HBRUSH g_brushRowB = nullptr;
 
 int g_currentIndex = -1;
 int g_metadataScrollPos = 0;
@@ -177,6 +179,11 @@ int g_haldCLUTScrollPos = 0;
 int g_haldCLUTTotalHeight = 0;
 int g_haldCLUTHoverIndex = -1;
 bool g_haldCLUTHoverOriginal = false;
+// LUT intensity slider (0-100, default 100%)
+int g_lutIntensity = 100;
+bool g_lutSliderDragging = false;
+bool g_lutSliderHover = false;
+constexpr int kSliderHeight = 32;
 std::vector<HaldCLUTCategory> g_haldCLUTCategories;
 HaldCLUTSelection g_selectedHaldCLUT;
 Image* g_haldCLUTImage = nullptr;
@@ -1748,10 +1755,12 @@ int CalculateHaldLevel(int width, int height) {
     int level = 1;
     // Maximum reasonable level (level^3 <= INT_MAX, so level <= 1625)
     const int maxLevel = 1625;
-    while (level <= maxLevel && level * level * level < size * size) { 
+    // HaldCLUT image size = level * cubeSize = level * level^2 = level^3
+    // So we need level^3 == size, not level^3 == size^2
+    while (level <= maxLevel && level * level * level < size) { 
         ++level; 
     }
-    if (level > maxLevel || level * level * level != size * size) return 0;
+    if (level > maxLevel || level * level * level != size) return 0;
     return level;
 }
 
@@ -1854,7 +1863,8 @@ void LoadHaldCLUTDirectoryRecursive(const std::wstring& path, const std::wstring
             HaldCLUTEntry entry;
             entry.name = file.substr(0, file.length() - 4);  // Remove .png
             entry.path = fullPath;
-            entry.level = level;
+            // Store cubeSize (level^2) for LUT lookup, not level
+            entry.level = level * level;
             entry.width = width;
             entry.height = height;
             category.entries.push_back(entry);
@@ -2116,6 +2126,11 @@ void UpdateHaldCLUTLayout() {
     if (!g_haldCLUTPanelCollapsed) {
         // Original entry
         g_haldCLUTTotalHeight += 24;
+        
+        // Intensity slider (only when LUT is selected)
+        if (g_selectedHaldCLUT.IsValid()) {
+            g_haldCLUTTotalHeight += kSliderHeight;
+        }
 
         for (const auto& cat : g_haldCLUTCategories) {
             g_haldCLUTTotalHeight += 26;  // Category header
@@ -2207,26 +2222,30 @@ void ApplyHaldCLUTToBitmapMx(Bitmap* source, Bitmap* clut) {
     for (int i = 0; i < 256; ++i) {
         channelLookup[i] = std::clamp(static_cast<int>(i * scale + 0.5f), 0, cubeSize - 1);
     }
+    
+    // Intensity mixing factor (0.0 - 1.0)
+    float intensity = g_lutIntensity / 100.0f;
 
     for (int y = 0; y < srcH; ++y) {
         for (int x = 0; x < srcW; ++x) {
             BYTE* pixel = srcPixels + y * srcStride + x * 4;
-            BYTE b = pixel[0];
-            BYTE g = pixel[1];
-            BYTE r = pixel[2];
+            BYTE origB = pixel[0];
+            BYTE origG = pixel[1];
+            BYTE origR = pixel[2];
 
-            const int clutR = channelLookup[r];
-            const int clutG = channelLookup[g];
-            const int clutB = channelLookup[b];
+            const int clutR = channelLookup[origR];
+            const int clutG = channelLookup[origG];
+            const int clutB = channelLookup[origB];
             const int linearIndex = clutR + cubeSize * clutG + cubeSize * cubeSize * clutB;
             const int clutX = linearIndex % clutW;
             const int clutY = linearIndex / clutW;
 
             if (clutX >= 0 && clutX < clutW && clutY >= 0 && clutY < clutH) {
                 BYTE* clutPixel = clutPixels + clutY * clutStride + clutX * 4;
-                pixel[0] = clutPixel[0];
-                pixel[1] = clutPixel[1];
-                pixel[2] = clutPixel[2];
+                // Mix original and LUT color based on intensity
+                pixel[0] = static_cast<BYTE>(origB * (1.0f - intensity) + clutPixel[0] * intensity + 0.5f);
+                pixel[1] = static_cast<BYTE>(origG * (1.0f - intensity) + clutPixel[1] * intensity + 0.5f);
+                pixel[2] = static_cast<BYTE>(origR * (1.0f - intensity) + clutPixel[2] * intensity + 0.5f);
             }
         }
     }
@@ -2246,8 +2265,10 @@ void ApplyHaldCLUTToBitmapSmooth(Bitmap* source, Bitmap* clut, int level) {
         return;
     }
 
+    // Note: 'level' parameter is actually cubeSize (level^2) for compatibility
     const int cubeSize = level;
-    if (cubeSize <= 1 || cubeSize * cubeSize * cubeSize != clutW * clutH) {
+    // Validate: cubeSize^3 should equal total pixels in LUT image
+    if (cubeSize <= 1 || static_cast<long long>(cubeSize) * cubeSize * cubeSize != clutW * clutH) {
         return;
     }
 
@@ -2320,16 +2341,28 @@ void ApplyHaldCLUTToBitmapSmooth(Bitmap* source, Bitmap* clut, int level) {
         return static_cast<BYTE>(std::clamp(value, 0.0f, 255.0f) + 0.5f);
     };
 
+    // Intensity mixing factor (0.0 - 1.0)
+    float intensity = g_lutIntensity / 100.0f;
+    
     for (int y = 0; y < srcH; ++y) {
         for (int x = 0; x < srcW; ++x) {
             BYTE* pixel = srcPixels + y * srcStride + x * 4;
-            const ChannelLookup& rInfo = channelLookup[pixel[2]];
-            const ChannelLookup& gInfo = channelLookup[pixel[1]];
-            const ChannelLookup& bInfo = channelLookup[pixel[0]];
+            BYTE origB = pixel[0];
+            BYTE origG = pixel[1];
+            BYTE origR = pixel[2];
+            
+            const ChannelLookup& rInfo = channelLookup[origR];
+            const ChannelLookup& gInfo = channelLookup[origG];
+            const ChannelLookup& bInfo = channelLookup[origB];
 
-            pixel[0] = SampleClutChannel(rInfo, gInfo, bInfo, 0);
-            pixel[1] = SampleClutChannel(rInfo, gInfo, bInfo, 1);
-            pixel[2] = SampleClutChannel(rInfo, gInfo, bInfo, 2);
+            BYTE lutB = SampleClutChannel(rInfo, gInfo, bInfo, 0);
+            BYTE lutG = SampleClutChannel(rInfo, gInfo, bInfo, 1);
+            BYTE lutR = SampleClutChannel(rInfo, gInfo, bInfo, 2);
+            
+            // Mix original and LUT color based on intensity
+            pixel[0] = static_cast<BYTE>(origB * (1.0f - intensity) + lutB * intensity + 0.5f);
+            pixel[1] = static_cast<BYTE>(origG * (1.0f - intensity) + lutG * intensity + 0.5f);
+            pixel[2] = static_cast<BYTE>(origR * (1.0f - intensity) + lutR * intensity + 0.5f);
         }
     }
 
@@ -2410,6 +2443,17 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_MOUSEWHEEL:
         ScrollHaldCLUT(-(GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA) * 48);
         return 0;
+        
+    case WM_TIMER:
+        if (wParam == kLUTIntensityTimerId) {
+            // Apply LUT with current intensity
+            if (g_mainWindow && g_selectedHaldCLUT.IsValid()) {
+                InvalidateRect(g_mainWindow, nullptr, FALSE);
+            }
+            // Kill timer after applying (single shot)
+            KillTimer(hwnd, kLUTIntensityTimerId);
+        }
+        return 0;
 
     case WM_VSCROLL: {
         SCROLLINFO si{};
@@ -2448,28 +2492,75 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     case WM_MOUSEMOVE: {
         POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        int headerHeight = static_cast<int>(kHeaderHeight * GetDpiScale());
+        float dpiScale = GetDpiScale();
+        int headerHeight = static_cast<int>(kHeaderHeight * dpiScale);
         
         // If collapsed, only header is visible
         if (g_haldCLUTPanelCollapsed) {
-            if (g_haldCLUTHoverIndex != -1 || g_haldCLUTHoverOriginal) {
+            if (g_haldCLUTHoverIndex != -1 || g_haldCLUTHoverOriginal || g_lutSliderHover) {
                 g_haldCLUTHoverIndex = -1;
                 g_haldCLUTHoverOriginal = false;
+                g_lutSliderHover = false;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
         
         int y = point.y + g_haldCLUTScrollPos - headerHeight;  // Offset for header
+        
+        // Check slider hover/drag
+        RECT sliderClient{};
+        GetClientRect(hwnd, &sliderClient);
+        int sliderWidth = sliderClient.right - sliderClient.left;
+        bool oldSliderHover = g_lutSliderHover;
+        g_lutSliderHover = false;
+        if (g_selectedHaldCLUT.IsValid()) {
+            int sliderY = 24;  // After Original entry
+            if (y >= sliderY && y < sliderY + kSliderHeight) {
+                int sliderMargin = static_cast<int>(10 * dpiScale);
+                int trackLeft = sliderMargin + static_cast<int>(50 * dpiScale);
+                int trackRight = sliderWidth - sliderMargin - static_cast<int>(30 * dpiScale);
+                if (point.x >= trackLeft - 10 && point.x <= trackRight + 10) {
+                    g_lutSliderHover = true;
+                }
+            }
+        }
+        
+        // Handle slider dragging
+        if (g_lutSliderDragging && g_selectedHaldCLUT.IsValid()) {
+            int sliderMargin = static_cast<int>(10 * dpiScale);
+            int trackLeft = sliderMargin + static_cast<int>(50 * dpiScale);
+            int trackRight = sliderWidth - sliderMargin - static_cast<int>(30 * dpiScale);
+            
+            float ratio = static_cast<float>(point.x - trackLeft) / (trackRight - trackLeft);
+            int newIntensity = std::clamp(static_cast<int>(ratio * 100), 0, 100);
+            
+            if (newIntensity != g_lutIntensity) {
+                g_lutIntensity = newIntensity;
+                // Set timer to delay LUT application (reduces lag during dragging)
+                SetTimer(hwnd, kLUTIntensityTimerId, 50, nullptr);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        
+        if (g_lutSliderHover != oldSliderHover) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
 
         int hoverIndex = -1;
         bool hoverOriginal = false;
         int currentY = 0;
-
+        
+        // Skip Original and slider when calculating category hover
         if (y >= currentY && y < currentY + 24) {
             hoverOriginal = true;
         }
         currentY += 24;
+        
+        // Skip slider area
+        if (g_selectedHaldCLUT.IsValid()) {
+            currentY += kSliderHeight;
+        }
 
         for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
             if (y >= currentY && y < currentY + 26) {
@@ -2504,10 +2595,56 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_MOUSELEAVE:
         g_haldCLUTHoverIndex = -1;
         g_haldCLUTHoverOriginal = false;
+        g_lutSliderHover = false;
+        // Cancel dragging and apply pending changes
+        if (g_lutSliderDragging) {
+            g_lutSliderDragging = false;
+            ReleaseCapture();
+            KillTimer(hwnd, kLUTIntensityTimerId);
+            if (g_mainWindow && g_selectedHaldCLUT.IsValid()) {
+                InvalidateRect(g_mainWindow, nullptr, FALSE);
+            }
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
-
+        
+    case WM_LBUTTONDOWN: {
+        if (!g_haldCLUTPanelCollapsed && g_lutSliderHover && g_selectedHaldCLUT.IsValid()) {
+            g_lutSliderDragging = true;
+            SetCapture(hwnd);
+            // Update immediately on click
+            float dpiScale = GetDpiScale();
+            POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT clickClient{};
+            GetClientRect(hwnd, &clickClient);
+            int clickWidth = clickClient.right - clickClient.left;
+            int sliderMargin = static_cast<int>(10 * dpiScale);
+            int trackLeft = sliderMargin + static_cast<int>(50 * dpiScale);
+            int trackRight = clickWidth - sliderMargin - static_cast<int>(30 * dpiScale);
+            
+            float ratio = static_cast<float>(point.x - trackLeft) / (trackRight - trackLeft);
+            g_lutIntensity = std::clamp(static_cast<int>(ratio * 100), 0, 100);
+            
+            InvalidateRect(hwnd, nullptr, FALSE);
+            if (g_mainWindow) {
+                InvalidateRect(g_mainWindow, nullptr, FALSE);
+            }
+            return 0;
+        }
+        return 0;
+    }
+    
     case WM_LBUTTONUP: {
+        if (g_lutSliderDragging) {
+            g_lutSliderDragging = false;
+            ReleaseCapture();
+            // Kill timer and apply LUT immediately on release
+            KillTimer(hwnd, kLUTIntensityTimerId);
+            if (g_mainWindow) {
+                InvalidateRect(g_mainWindow, nullptr, FALSE);
+            }
+            return 0;
+        }
         POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         RECT client{};
         GetClientRect(hwnd, &client);
@@ -2557,6 +2694,14 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
         }
         currentY += 24;
+        
+        // Skip slider area when clicking
+        if (g_selectedHaldCLUT.IsValid()) {
+            if (y >= currentY && y < currentY + kSliderHeight) {
+                return 0;  // Clicked on slider, already handled in LBUTTONDOWN
+            }
+            currentY += kSliderHeight;
+        }
 
         for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
             // Check category header click
@@ -2685,6 +2830,58 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         RECT originalTextRect = {40, y, width - 10, y + 24};
         DrawTextW(memoryDc, L"Original", -1, &originalTextRect, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         y += 24;
+        
+        // Draw intensity slider when LUT is selected
+        if (g_selectedHaldCLUT.IsValid()) {
+            float dpiScale = GetDpiScale();
+            int sliderMargin = static_cast<int>(10 * dpiScale);
+            int trackHeight = static_cast<int>(4 * dpiScale);
+            int thumbSize = static_cast<int>(10 * dpiScale);
+            int sliderTop = y + 4;
+            int sliderBottom = y + kSliderHeight - 4;
+            int trackY = sliderTop + (sliderBottom - sliderTop - trackHeight) / 2;
+            int trackLeft = sliderMargin + static_cast<int>(40 * dpiScale);  // Space for label
+            int trackRight = width - sliderMargin - static_cast<int>(36 * dpiScale);  // Space for value
+            
+            // Draw label
+            SetTextColor(memoryDc, kColorTextSecondary);
+            RECT labelRect = {sliderMargin, sliderTop, trackLeft - 4, sliderBottom};
+            DrawTextW(memoryDc, L"Mix", -1, &labelRect, DT_VCENTER | DT_SINGLELINE);
+            
+            // Draw track background
+            RECT trackRect = {trackLeft, trackY, trackRight, trackY + trackHeight};
+            FillRect(memoryDc, &trackRect, g_brushRowB);
+            
+            // Calculate thumb position (constrained within track)
+            int trackWidth = trackRight - trackLeft;
+            int fillWidth = static_cast<int>(trackWidth * g_lutIntensity / 100.0f);
+            
+            // Draw filled portion (up to thumb center)
+            RECT fillRect = {trackLeft, trackY, trackLeft + fillWidth, trackY + trackHeight};
+            HBRUSH fillBrush = CreateSolidBrush(kColorAccent);
+            FillRect(memoryDc, &fillRect, fillBrush);
+            DeleteObject(fillBrush);
+            
+            // Draw thumb (constrained to stay within track)
+            int thumbX = trackLeft + fillWidth;
+            thumbX = std::clamp(thumbX, trackLeft + thumbSize/2, trackRight - thumbSize/2);
+            int thumbY = trackY + trackHeight / 2;
+            HBRUSH thumbBrush = CreateSolidBrush(g_lutSliderDragging || g_lutSliderHover ? 
+                                                  RGB(150, 200, 255) : kColorAccent);
+            RECT thumbRect = {thumbX - thumbSize/2, thumbY - thumbSize/2, 
+                              thumbX + thumbSize/2, thumbY + thumbSize/2};
+            FillRect(memoryDc, &thumbRect, thumbBrush);
+            DeleteObject(thumbBrush);
+            
+            // Draw value text
+            wchar_t valueText[8];
+            swprintf_s(valueText, L"%d%%", g_lutIntensity);
+            SetTextColor(memoryDc, kColorTextPrimary);
+            RECT valueRect = {trackRight + 4, sliderTop, width - sliderMargin, sliderBottom};
+            DrawTextW(memoryDc, valueText, -1, &valueRect, DT_VCENTER | DT_SINGLELINE | DT_RIGHT);
+            
+            y += kSliderHeight;
+        }
 
         // Draw categories and entries
         for (size_t i = 0; i < g_haldCLUTCategories.size(); ++i) {
@@ -2774,6 +2971,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         g_brushHeader = CreateSolidBrush(kColorPanelHeader);
         g_brushHeaderHover = CreateSolidBrush(kColorPanelHeaderHover);
         g_brushStatus = CreateSolidBrush(kColorPanelBg);
+        g_brushRowB = CreateSolidBrush(kColorPanelRowB);
 
         CreateMainMenu(hwnd);
 
@@ -3196,6 +3394,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (g_brushStatus) {
             DeleteObject(g_brushStatus);
             g_brushStatus = nullptr;
+        }
+        if (g_brushRowB) {
+            DeleteObject(g_brushRowB);
+            g_brushRowB = nullptr;
         }
         ClearBackbufferCache();
         PostQuitMessage(0);
