@@ -171,6 +171,7 @@ bool g_headerHot = false;
 
 // HaldCLUT globals
 bool g_haldCLUTPanelVisible = false;
+bool g_haldCLUTPanelCollapsed = false;
 bool g_haldCLUTHot = false;
 int g_haldCLUTScrollPos = 0;
 int g_haldCLUTTotalHeight = 0;
@@ -883,7 +884,9 @@ int GetCurrentPanelWidth() {
         width += static_cast<int>(panelWidth * dpiScale);
     }
     if (g_haldCLUTPanelVisible) {
-        width += static_cast<int>(kHaldCLUTPanelWidth * dpiScale);
+        // When collapsed, use same width as Info panel collapsed width
+        int panelWidth = g_haldCLUTPanelCollapsed ? kCollapsedPanelWidth : kHaldCLUTPanelWidth;
+        width += static_cast<int>(panelWidth * dpiScale);
     }
     return width;
 }
@@ -1018,8 +1021,14 @@ void LayoutChildren(bool invalidateMainWindow = true) {
 
     // HaldCLUT panel is rightmost
     if (g_haldCLUTPanelVisible && g_haldCLUTPanel) {
-        int haldWidth = static_cast<int>(kHaldCLUTPanelWidth * dpiScale);
-        MoveWindow(g_haldCLUTPanel, rightEdge - haldWidth, 0, haldWidth, contentHeight, TRUE);
+        // When collapsed, use same width as Info panel collapsed width
+        int haldWidth = g_haldCLUTPanelCollapsed 
+            ? static_cast<int>(kCollapsedPanelWidth * dpiScale) 
+            : static_cast<int>(kHaldCLUTPanelWidth * dpiScale);
+        int headerHeight = static_cast<int>(kHeaderHeight * dpiScale);
+        // When collapsed, only show header height
+        int haldHeight = g_haldCLUTPanelCollapsed ? headerHeight : contentHeight;
+        MoveWindow(g_haldCLUTPanel, rightEdge - haldWidth, 0, haldWidth, haldHeight, TRUE);
         ShowWindow(g_haldCLUTPanel, SW_SHOW);
         rightEdge -= haldWidth;
     } else if (g_haldCLUTPanel) {
@@ -2096,17 +2105,23 @@ void UpdateHaldCLUTLayout() {
     RECT rc{};
     GetClientRect(g_haldCLUTPanel, &rc);
     const int pageHeight = std::max<int>(0, rc.bottom - rc.top);
+    // Use DPI-scaled header height to match visual height
+    int headerHeight = static_cast<int>(kHeaderHeight * GetDpiScale());
 
     g_haldCLUTTotalHeight = 0;
     // Header height
-    g_haldCLUTTotalHeight += 30;
-    // Original entry
-    g_haldCLUTTotalHeight += 24;
+    g_haldCLUTTotalHeight += headerHeight;
+    
+    // If collapsed, only header is visible
+    if (!g_haldCLUTPanelCollapsed) {
+        // Original entry
+        g_haldCLUTTotalHeight += 24;
 
-    for (const auto& cat : g_haldCLUTCategories) {
-        g_haldCLUTTotalHeight += 26;  // Category header
-        if (cat.expanded) {
-            g_haldCLUTTotalHeight += static_cast<int>(cat.entries.size()) * 24;  // Entries
+        for (const auto& cat : g_haldCLUTCategories) {
+            g_haldCLUTTotalHeight += 26;  // Category header
+            if (cat.expanded) {
+                g_haldCLUTTotalHeight += static_cast<int>(cat.entries.size()) * 24;  // Entries
+            }
         }
     }
 
@@ -2114,11 +2129,15 @@ void UpdateHaldCLUTLayout() {
     si.cbSize = sizeof(si);
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     si.nMin = 0;
-    si.nMax = std::max(0, g_haldCLUTTotalHeight - 1);
+    // When collapsed, no scrolling needed
+    si.nMax = g_haldCLUTPanelCollapsed ? 0 : std::max(0, g_haldCLUTTotalHeight - 1);
     si.nPage = static_cast<UINT>(pageHeight);
-    si.nPos = std::clamp(g_haldCLUTScrollPos, 0, std::max(0, g_haldCLUTTotalHeight - pageHeight));
+    si.nPos = g_haldCLUTPanelCollapsed ? 0 : std::clamp(g_haldCLUTScrollPos, 0, std::max(0, g_haldCLUTTotalHeight - pageHeight));
     g_haldCLUTScrollPos = si.nPos;
     SetScrollInfo(g_haldCLUTPanel, SB_VERT, &si, TRUE);
+    
+    // Show/hide scrollbar based on collapsed state
+    ShowScrollBar(g_haldCLUTPanel, SB_VERT, !g_haldCLUTPanelCollapsed);
 }
 
 void ScrollHaldCLUT(int delta) {
@@ -2429,7 +2448,19 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     case WM_MOUSEMOVE: {
         POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        int y = point.y + g_haldCLUTScrollPos - 30;  // Offset for header
+        int headerHeight = static_cast<int>(kHeaderHeight * GetDpiScale());
+        
+        // If collapsed, only header is visible
+        if (g_haldCLUTPanelCollapsed) {
+            if (g_haldCLUTHoverIndex != -1 || g_haldCLUTHoverOriginal) {
+                g_haldCLUTHoverIndex = -1;
+                g_haldCLUTHoverOriginal = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+        
+        int y = point.y + g_haldCLUTScrollPos - headerHeight;  // Offset for header
 
         int hoverIndex = -1;
         bool hoverOriginal = false;
@@ -2480,13 +2511,33 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         RECT client{};
         GetClientRect(hwnd, &client);
+        // Use DPI-scaled header height to match visual height
+        int headerHeight = static_cast<int>(kHeaderHeight * GetDpiScale());
 
-        if (point.y >= 0 && point.y < 30 && point.x >= client.right - 100 && point.x < client.right) {
-            ShowConfigDialog(g_mainWindow ? g_mainWindow : hwnd);
+        // Check if clicking on header (for collapse/expand)
+        if (point.y >= 0 && point.y < headerHeight) {
+            // Check if clicking Load button
+            if (point.x >= client.right - 60 && point.x < client.right - 10) {
+                ShowConfigDialog(g_mainWindow ? g_mainWindow : hwnd);
+                return 0;
+            }
+            // Otherwise toggle collapse/expand
+            g_haldCLUTPanelCollapsed = !g_haldCLUTPanelCollapsed;
+            UpdateHaldCLUTLayout();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            // Layout children to resize the panel
+            if (g_mainWindow) {
+                LayoutChildren();
+            }
+            return 0;
+        }
+        
+        // If collapsed, ignore clicks below header
+        if (g_haldCLUTPanelCollapsed) {
             return 0;
         }
 
-        int y = point.y + g_haldCLUTScrollPos - 30;
+        int y = point.y + g_haldCLUTScrollPos - headerHeight;
 
         int currentY = 0;
         if (y >= currentY && y < currentY + 24) {
@@ -2573,21 +2624,48 @@ LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         HFONT oldFont = static_cast<HFONT>(SelectObject(memoryDc, g_uiFont));
 
         int y = -g_haldCLUTScrollPos;
+        // Calculate header height matching Info panel (which uses DPI-scaled header height)
+        int headerHeight = g_haldCLUTPanelCollapsed ? height : static_cast<int>(kHeaderHeight * GetDpiScale());
 
-        // Draw header
-        RECT headerRect = {0, y, width, y + 30};
+        // Draw header (clickable to collapse/expand) - match Info panel style
+        RECT headerRect = {0, y, width, y + headerHeight};
         FillRect(memoryDc, &headerRect, g_brushHeader);
+        FrameRect(memoryDc, &headerRect, g_brushWindow);  // Add border like Info panel
         SetTextColor(memoryDc, kColorTextPrimary);
         SelectObject(memoryDc, g_uiFontBold);
-        RECT textRect = {10, y, width - 10, y + 30};
-        DrawTextW(memoryDc, L"HaldCLUT Filters", -1, &textRect, DT_VCENTER | DT_SINGLELINE);
+        RECT textRect = {10, y, width - 10, y + headerHeight};
+        DrawTextW(memoryDc, L"LUT", -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         
-        // Draw config button hint
+        // Draw Load button hint
         SetTextColor(memoryDc, kColorTextSecondary);
-        RECT hintRect = {width - 100, y, width - 10, y + 30};
-        DrawTextW(memoryDc, L"[Configure]", -1, &hintRect, DT_VCENTER | DT_RIGHT | DT_SINGLELINE);
+        RECT hintRect = {width - 60, y, width - 10, y + headerHeight};
+        DrawTextW(memoryDc, L"Load", -1, &hintRect, DT_VCENTER | DT_RIGHT | DT_SINGLELINE);
         
-        y += 30;
+        y += headerHeight;
+        
+        // If collapsed, don't draw the rest
+        if (g_haldCLUTPanelCollapsed) {
+            // Border
+            HPEN borderPen = CreatePen(PS_SOLID, 1, kColorBorder);
+            HPEN oldPen = static_cast<HPEN>(SelectObject(memoryDc, borderPen));
+            HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
+            Rectangle(memoryDc, client.left, client.top, client.right, client.bottom);
+            SelectObject(memoryDc, oldBrush);
+            SelectObject(memoryDc, oldPen);
+            DeleteObject(borderPen);
+            
+            SelectObject(memoryDc, oldFont);
+            
+            // Copy to screen
+            BitBlt(dc, 0, 0, width, height, memoryDc, 0, 0, SRCCOPY);
+            
+            SelectObject(memoryDc, oldBitmap);
+            DeleteObject(backBuffer);
+            DeleteDC(memoryDc);
+            
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
 
         SelectObject(memoryDc, g_uiFont);
 
@@ -3074,9 +3152,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_ERASEBKGND: {
-        // Only erase the viewport area, not where panels are
-        RECT viewport = GetImageViewportRect();
-        FillRect(reinterpret_cast<HDC>(wParam), &viewport, g_brushWindow);
+        // Erase entire client area to prevent ghosting when panels are hidden/resized
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        FillRect(reinterpret_cast<HDC>(wParam), &client, g_brushWindow);
         return 1;
     }
 
