@@ -1244,12 +1244,7 @@ bool DeleteCurrentImage() {
         return false;
     }
 
-    int fallbackIndex = -1;
-    if (g_currentIndex - 1 >= 0) {
-        fallbackIndex = g_currentIndex - 1;
-    } else if (g_currentIndex < static_cast<int>(g_imageFiles.size())) {
-        fallbackIndex = g_currentIndex;
-    }
+    int fallbackIndex = g_currentIndex;
 
     SetCurrentImage(nullptr);
 

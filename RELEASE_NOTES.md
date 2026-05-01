@@ -7,9 +7,9 @@ Noctis Viewer is a lightweight native Windows image viewer focused on fast brows
 ### Bug Fixes
 
 - **Fixed Delete Navigation**
-  - After deleting an image, viewer now correctly shows the previous image
-  - Previously it incorrectly jumped to the next image (or last image)
-  - When deleting the first image, it now correctly shows the new first image
+  - After deleting an image, viewer now shows the next image (same index)
+  - When deleting the last image, it shows the previous image
+  - Previously it incorrectly jumped to the last image
 
 - **Fixed Delete Confirmation Default Button**
   - Default focus is now on "Yes" button for faster workflow

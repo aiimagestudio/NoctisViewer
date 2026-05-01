@@ -41,7 +41,7 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 
 ## New in v1.4.3
 
-- **Fixed Delete Navigation**: After deleting an image, viewer now correctly shows the previous image
+- **Fixed Delete Navigation**: After deleting an image, viewer now shows the next image (same index); when deleting the last image, shows the previous image
 - **Fixed Delete Confirmation**: Default focus is now on "Yes" button
 
 ## New in v1.4.2
