@@ -58,7 +58,7 @@ constexpr UINT kLoadHaldCLUTMsg = WM_USER + 200;  // Async LUT loading message
 constexpr UINT kLUTIntensityTimerId = 3002;       // Delayed LUT intensity update
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.4.2";
+constexpr wchar_t kAppVersion[] = L"1.4.3";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -1239,16 +1239,16 @@ bool DeleteCurrentImage() {
         g_mainWindow,
         prompt.c_str(),
         L"Confirm Delete",
-        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON1);
     if (answer != IDYES) {
         return false;
     }
 
     int fallbackIndex = -1;
-    if (g_currentIndex + 1 < static_cast<int>(g_imageFiles.size())) {
-        fallbackIndex = g_currentIndex + 1;
-    } else if (g_currentIndex - 1 >= 0) {
+    if (g_currentIndex - 1 >= 0) {
         fallbackIndex = g_currentIndex - 1;
+    } else if (g_currentIndex < static_cast<int>(g_imageFiles.size())) {
+        fallbackIndex = g_currentIndex;
     }
 
     SetCurrentImage(nullptr);

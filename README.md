@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.2
+# Noctis Viewer v1.4.3
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,11 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - File association support (add to "Open with" menu)
 - Menu bar with File, View, Tools, and Help options
 - Optimized rendering with double buffering to eliminate flickering
+
+## New in v1.4.3
+
+- **Fixed Delete Navigation**: After deleting an image, viewer now correctly shows the previous image
+- **Fixed Delete Confirmation**: Default focus is now on "Yes" button
 
 ## New in v1.4.2
 
@@ -136,7 +141,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-- `Noctis_Viewer-v1.4.1-x64.zip`
+- `Noctis_Viewer-v1.4.3-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
 
