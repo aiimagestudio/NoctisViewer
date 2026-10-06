@@ -1,6 +1,22 @@
-# Noctis Viewer v1.4.3
+# Noctis Viewer v1.4.4
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
+
+## What's New in v1.4.4
+
+### Improvements
+
+- **Instant Delete**
+  - Pressing Delete immediately removes the current image
+  - The confirmation dialog has been removed for a faster browsing workflow
+
+- **Non-locking Image Load**
+  - The currently displayed image is loaded into memory
+  - External programs can delete or move the file while it is open in the viewer
+
+- **External File Change Handling**
+  - If the current file is deleted or moved by another program, the viewer switches to the previous image
+  - If the current file was the first in the folder, it switches to the next image
 
 ## What's New in v1.4.3
 

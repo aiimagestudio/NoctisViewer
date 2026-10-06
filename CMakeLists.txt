@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(Noctis_Viewer VERSION 1.3 LANGUAGES CXX)
+project(Noctis_Viewer VERSION 1.4.4 LANGUAGES CXX)
 
 # C++17 standard
 set(CMAKE_CXX_STANDARD 17)

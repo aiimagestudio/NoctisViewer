@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.3
+# Noctis Viewer v1.4.4
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,12 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - File association support (add to "Open with" menu)
 - Menu bar with File, View, Tools, and Help options
 - Optimized rendering with double buffering to eliminate flickering
+
+## New in v1.4.4
+
+- **Instant Delete**: Pressing Delete immediately removes the current image, with no confirmation dialog
+- **Non-locking Image Load**: The currently displayed image is loaded into memory, so other programs can delete or move the file
+- **External File Change Handling**: If the current file is deleted or moved externally, the viewer shows the previous image; if it was the first image, it shows the next one
 
 ## New in v1.4.3
 
@@ -102,7 +108,7 @@ Many thanks to the `hald-clut` project and its contributors for providing and ma
 | `Home` | Jump to first image |
 | `End` | Jump to last image |
 | `Ctrl+O` | Open file dialog |
-| `Delete` | Delete current image (with confirmation) |
+| `Delete` | Delete current image |
 | `H` | Toggle HaldCLUT panel |
 | `Space` (hold) | Preview original image while LUT is active |
 | Mouse wheel | Previous / next image |
@@ -141,7 +147,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-- `Noctis_Viewer-v1.4.3-x64.zip`
+- `Noctis_Viewer-v1.4.4-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
 

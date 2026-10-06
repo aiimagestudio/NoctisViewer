@@ -26,6 +26,7 @@ using namespace Gdiplus;
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace {
 
@@ -56,9 +57,11 @@ constexpr UINT kProgressTimerId = 3001;
 constexpr UINT kProgressUpdateMsg = WM_USER + 100;
 constexpr UINT kLoadHaldCLUTMsg = WM_USER + 200;  // Async LUT loading message
 constexpr UINT kLUTIntensityTimerId = 3002;       // Delayed LUT intensity update
+constexpr UINT kFileWatchTimerId = 3003;          // Current-file existence poll
+constexpr UINT kFileWatchIntervalMs = 300;
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.4.3";
+constexpr wchar_t kAppVersion[] = L"1.4.4";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -258,6 +261,8 @@ LRESULT CALLBACK MetadataViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 LRESULT CALLBACK HaldCLUTViewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK ProgressDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void ClearViewerState();
+void StopCurrentFileWatch();
+void CheckCurrentImageFile();
 bool DeleteCurrentImage();
 void CreateMainMenu(HWND hwnd);
 bool RegisterFileAssociation(const wchar_t* ext, bool setAsDefault);
@@ -1173,7 +1178,71 @@ void SetCurrentImage(Image* image) {
     UpdateMenuState();
 }
 
+void StopCurrentFileWatch() {
+    if (g_mainWindow) {
+        KillTimer(g_mainWindow, kFileWatchTimerId);
+    }
+}
+
+void StartCurrentFileWatch() {
+    if (g_mainWindow && !g_currentFilePath.empty()) {
+        SetTimer(g_mainWindow, kFileWatchTimerId, kFileWatchIntervalMs, nullptr);
+    }
+}
+
+bool CurrentImageFileExists() {
+    if (g_currentFilePath.empty()) {
+        return false;
+    }
+    const DWORD attributes = GetFileAttributesW(g_currentFilePath.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+// Read the file into memory so GDI+ does not keep an exclusive lock on disk.
+Image* LoadImageUnlocked(const std::wstring& filePath) {
+    HANDLE file = CreateFileW(
+        filePath.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return nullptr;
+    }
+
+    LARGE_INTEGER fileSize{};
+    if (!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart <= 0 || fileSize.QuadPart > 512ll * 1024 * 1024) {
+        CloseHandle(file);
+        return nullptr;
+    }
+
+    const DWORD size = static_cast<DWORD>(fileSize.QuadPart);
+    std::vector<BYTE> bytes(size);
+    DWORD bytesRead = 0;
+    const BOOL readOk = ReadFile(file, bytes.data(), size, &bytesRead, nullptr);
+    CloseHandle(file);
+    if (!readOk || bytesRead != size) {
+        return nullptr;
+    }
+
+    IStream* stream = SHCreateMemStream(bytes.data(), size);
+    if (!stream) {
+        return nullptr;
+    }
+
+    Image* image = Image::FromStream(stream, FALSE);
+    stream->Release();
+    if (!image || image->GetLastStatus() != Ok) {
+        delete image;
+        return nullptr;
+    }
+    return image;
+}
+
 void ClearViewerState() {
+    StopCurrentFileWatch();
     SetCurrentImage(nullptr);
     g_currentFilePath.clear();
     g_imageFiles.clear();
@@ -1193,13 +1262,12 @@ void ClearViewerState() {
     InvalidateRect(g_mainWindow, nullptr, FALSE);
 }
 
-bool LoadImageFile(const std::wstring& filePath, bool preserveViewState = false) {
-    Image* image = Image::FromFile(filePath.c_str(), FALSE);
-    if (!image || image->GetLastStatus() != Ok) {
-        if (image) {
-            delete image;
+bool LoadImageFile(const std::wstring& filePath, bool preserveViewState = false, bool silentFail = false) {
+    Image* image = LoadImageUnlocked(filePath);
+    if (!image) {
+        if (!silentFail) {
+            ShowError(L"Failed to load the image.");
         }
-        ShowError(L"Failed to load the image.");
         return false;
     }
 
@@ -1212,6 +1280,7 @@ bool LoadImageFile(const std::wstring& filePath, bool preserveViewState = false)
     UpdateWindowTitle();
     UpdateStatusBar();
     LayoutChildren(false);
+    StartCurrentFileWatch();
     
     if (preserveViewState) {
         // Keep current zoom and pan when navigating between images
@@ -1225,27 +1294,64 @@ bool LoadImageFile(const std::wstring& filePath, bool preserveViewState = false)
     return true;
 }
 
+void HandleExternalCurrentFileGone() {
+    if (g_currentFilePath.empty()) {
+        return;
+    }
+
+    const int oldIndex = g_currentIndex;
+    const std::wstring folder = GetDirectoryName(g_currentFilePath);
+
+    StopCurrentFileWatch();
+    SetCurrentImage(nullptr);
+    LoadFolderImages(folder);
+
+    if (g_imageFiles.empty()) {
+        ClearViewerState();
+        return;
+    }
+
+    // Previous image if we were not on the first; otherwise the next (now at index 0).
+    int targetIndex = (oldIndex <= 0) ? 0 : oldIndex - 1;
+    if (targetIndex >= static_cast<int>(g_imageFiles.size())) {
+        targetIndex = static_cast<int>(g_imageFiles.size()) - 1;
+    }
+
+    if (LoadImageFile(g_imageFiles[targetIndex], true, true)) {
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(g_imageFiles.size()); ++i) {
+        if (i == targetIndex) {
+            continue;
+        }
+        if (LoadImageFile(g_imageFiles[i], true, true)) {
+            return;
+        }
+    }
+
+    ClearViewerState();
+}
+
+void CheckCurrentImageFile() {
+    static bool handling = false;
+    if (handling || g_currentFilePath.empty() || CurrentImageFileExists()) {
+        return;
+    }
+    handling = true;
+    HandleExternalCurrentFileGone();
+    handling = false;
+}
+
 bool DeleteCurrentImage() {
     if (g_currentFilePath.empty() || g_currentIndex < 0) {
         return false;
     }
 
     const std::wstring fileToDelete = g_currentFilePath;
-    const std::wstring fileName = GetFileNameOnly(fileToDelete);
-    const std::wstring prompt =
-        L"Delete this image?\n\n" + fileName + L"\n\nThis will permanently delete the file.";
-
-    const int answer = MessageBoxW(
-        g_mainWindow,
-        prompt.c_str(),
-        L"Confirm Delete",
-        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON1);
-    if (answer != IDYES) {
-        return false;
-    }
-
     int fallbackIndex = g_currentIndex;
 
+    StopCurrentFileWatch();
     SetCurrentImage(nullptr);
 
     if (!DeleteFileW(fileToDelete.c_str())) {
@@ -3100,6 +3206,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_TIMER:
+        if (wParam == kFileWatchTimerId) {
+            CheckCurrentImageFile();
+            return 0;
+        }
         if (wParam == kLoadHaldCLUTMsg) {
             KillTimer(hwnd, kLoadHaldCLUTMsg);
             // FALL THROUGH to custom message handler for LUT loading
@@ -3353,6 +3463,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_DESTROY:
+        StopCurrentFileWatch();
         if (g_currentImage) {
             delete g_currentImage;
             g_currentImage = nullptr;

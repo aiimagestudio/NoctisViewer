@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.3
+# Noctis Viewer v1.4.4
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,12 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 支持文件关联（添加到"打开方式"菜单）
 - 菜单栏支持（文件、视图、工具、帮助）
 - 双缓冲优化渲染，消除闪烁
+
+## v1.4.4 更新内容
+
+- **即时删除**：按 Delete 立即删除当前图片，不再弹出确认框
+- **不锁定当前文件**：当前显示的图片从内存加载，外部程序可以删除或移动该文件
+- **外部删除/移动自动切换**：当前文件被外部程序删除或移动时，自动显示前一张；若已是第一张，则显示后一张
 
 ## v1.4.3 更新内容
 
@@ -102,7 +108,7 @@ https://github.com/cedeber/hald-clut
 | `Home` | 跳转到第一张图片 |
 | `End` | 跳转到最后一张图片 |
 | `Ctrl+O` | 打开文件对话框 |
-| `Delete` | 删除当前图片（需确认） |
+| `Delete` | 删除当前图片 |
 | `H` | 切换 HaldCLUT 面板 |
 | `Space` | 在 LUT 生效时按住临时预览原图 |
 | 鼠标滚轮 | 上一张 / 下一张 |
@@ -141,7 +147,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## 下载
 
-- `Noctis_Viewer-v1.4.1-x64.zip`
+- `Noctis_Viewer-v1.4.4-x64.zip`
 
 解压后直接运行 `Noctis_Viewer.exe`，无需安装。
 
