@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.4
+# Noctis Viewer v1.4.5
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,10 @@ Starting with v1.3, Noctis Viewer also includes a powerful built-in HaldCLUT wor
 - File association support (add to "Open with" menu)
 - Menu bar with File, View, Tools, and Help options
 - Optimized rendering with double buffering to eliminate flickering
+
+## New in v1.4.5
+
+- **Next Image Picks Up New Files**: Moving to the next image (mouse wheel down, arrow keys, and other next actions) re-scans the current folder, so images added after the viewer was already on the last file are shown
 
 ## New in v1.4.4
 
@@ -147,7 +151,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## Download
 
-- `Noctis_Viewer-v1.4.4-x64.zip`
+- `Noctis_Viewer-v1.4.5-x64.zip`
 
 Extract and run `Noctis_Viewer.exe`. No installation required.
 

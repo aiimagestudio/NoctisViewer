@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.4
+# Noctis Viewer v1.4.5
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,10 @@ v1.3 からは強力な HaldCLUT ワークフローも内蔵され、LUT の参�
 - ファイル関連付けサポート
 - メニューバー（File / View / Tools / Help）
 - ダブルバッファリングによるチラつきなし描画
+
+## v1.4.5 の変更点
+
+- **次の画像で新規ファイルを反映**: 次の画像へ移動する操作（マウスホイール下、方向キーなど）で現在のフォルダーを再スキャンします。最後の画像を表示中でも、その後追加された画像を次の操作で表示します
 
 ## v1.4.4 の変更点
 
@@ -147,7 +151,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## ダウンロード
 
-- `Noctis_Viewer-v1.4.4-x64.zip`
+- `Noctis_Viewer-v1.4.5-x64.zip`
 
 解凍して `Noctis_Viewer.exe` を実行するだけです。インストール不要です。
 

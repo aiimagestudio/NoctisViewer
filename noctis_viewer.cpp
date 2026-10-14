@@ -61,7 +61,7 @@ constexpr UINT kFileWatchTimerId = 3003;          // Current-file existence poll
 constexpr UINT kFileWatchIntervalMs = 300;
 
 // Version
-constexpr wchar_t kAppVersion[] = L"1.4.4";
+constexpr wchar_t kAppVersion[] = L"1.4.5";
 constexpr int kCollapsedPanelWidth = 120;
 constexpr int kHeaderHeight = 34;
 constexpr int kMinWindowWidth = 680;
@@ -1377,6 +1377,17 @@ void NavigateRelative(int offset) {
     if (g_imageFiles.empty() || g_currentIndex < 0) {
         return;
     }
+
+    // Forward navigation always re-reads the folder so files added after the
+    // last scan (including while already on the last image) become reachable.
+    if (offset > 0 && !g_currentFilePath.empty()) {
+        LoadFolderImages(GetDirectoryName(g_currentFilePath));
+        UpdateCurrentIndex();
+        if (g_imageFiles.empty() || g_currentIndex < 0) {
+            return;
+        }
+    }
+
     const int nextIndex = g_currentIndex + offset;
     if (nextIndex < 0 || nextIndex >= static_cast<int>(g_imageFiles.size())) {
         return;

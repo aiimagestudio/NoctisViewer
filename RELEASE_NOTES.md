@@ -1,6 +1,15 @@
-# Noctis Viewer v1.4.4
+# Noctis Viewer v1.4.5
 
 Noctis Viewer is a lightweight native Windows image viewer focused on fast browsing, clean metadata inspection, and real-time HaldCLUT color grading.
+
+## What's New in v1.4.5
+
+### Bug Fixes
+
+- **Next Image Picks Up New Files**
+  - Moving to the next image re-scans the current folder
+  - Mouse wheel down, arrow keys, and other next actions are included
+  - Images added after the viewer was already on the last file appear on the next navigation
 
 ## What's New in v1.4.4
 

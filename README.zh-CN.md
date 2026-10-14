@@ -1,4 +1,4 @@
-# Noctis Viewer v1.4.4
+# Noctis Viewer v1.4.5
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
@@ -38,6 +38,10 @@ Noctis Viewer 是一个面向 Windows 的轻量级原生图片浏览器，专注
 - 支持文件关联（添加到"打开方式"菜单）
 - 菜单栏支持（文件、视图、工具、帮助）
 - 双缓冲优化渲染，消除闪烁
+
+## v1.4.5 更新内容
+
+- **下一张会读取新图片**：触发下一张（鼠标下滚、方向键等）时会重新扫描当前文件夹。已经停在最后一张后，文件夹里新增的图片也会在下一次往后翻时显示
 
 ## v1.4.4 更新内容
 
@@ -147,7 +151,7 @@ bin\Release\Noctis_Viewer.exe
 
 ## 下载
 
-- `Noctis_Viewer-v1.4.4-x64.zip`
+- `Noctis_Viewer-v1.4.5-x64.zip`
 
 解压后直接运行 `Noctis_Viewer.exe`，无需安装。
 
